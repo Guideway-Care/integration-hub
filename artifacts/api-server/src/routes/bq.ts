@@ -73,14 +73,20 @@ router.post("/bq/staging-add", async (req, res) => {
       batchId: z.string().optional(),
     });
     const parsed = schema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0].message });
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues[0].message });
+      return;
+    }
 
     const bq = getBigQueryClient();
     const { staging } = getBqTables();
     const batchId = parsed.data.batchId || `batch-${Date.now()}`;
     const callIdRegex = /^\d{6,20}$/;
     const validIds = parsed.data.callIds.filter((id) => callIdRegex.test(id));
-    if (validIds.length === 0) return res.status(400).json({ error: "No valid call IDs (must be 6-20 digits)" });
+    if (validIds.length === 0) {
+      res.status(400).json({ error: "No valid call IDs (must be 6-20 digits)" });
+      return;
+    }
 
     for (const callId of validIds) {
       await bq.query({
@@ -184,7 +190,8 @@ router.get("/bq/call-list-status", async (_req, res) => {
     const file = gcsClient.bucket(bucket).file("call_list/call_list.txt");
     const [exists] = await file.exists();
     if (!exists) {
-      return res.json({ exists: false, lineCount: 0 });
+      res.json({ exists: false, lineCount: 0 });
+      return;
     }
     const [contents] = await file.download();
     const lines = contents.toString("utf-8").split(/\r?\n/).map(l => l.trim()).filter(l => /^\d{6,20}$/.test(l));

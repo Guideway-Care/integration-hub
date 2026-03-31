@@ -51,8 +51,8 @@ router.get("/dashboard/summary", async (_req, res, next) => {
       const [stagingRows] = await bq.query({
         query: `SELECT status, COUNT(*) as count FROM \`${projectId}.incontact.staging_call_queue\` GROUP BY status`,
       });
-      const summary: Record<string, number> = { pending: 0, processing: 0, downloaded: 0, failed: 0 };
-      stagingRows.forEach((r: any) => { summary[r.status] = Number(r.count); });
+      const summary: { pending: number; processing: number; downloaded: number; failed: number } = { pending: 0, processing: 0, downloaded: 0, failed: 0 };
+      stagingRows.forEach((r: any) => { (summary as any)[r.status] = Number(r.count); });
       incontact.staging = { ...summary, total: Object.values(summary).reduce((a, b) => a + b, 0) };
 
       const [recCount] = await bq.query({

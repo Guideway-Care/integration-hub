@@ -51,7 +51,8 @@ router.get("/export/recordings", async (_req, res, next) => {
     if (format === "json") {
       res.setHeader("Content-Type", "application/json");
       res.setHeader("Content-Disposition", "attachment; filename=recordings.json");
-      return res.json(rows);
+      res.json(rows);
+      return;
     }
 
     res.setHeader("Content-Type", "text/csv");
@@ -70,7 +71,8 @@ router.get("/export/staging-queue", async (req, res, next) => {
     const status = req.query.status as string | undefined;
 
     if (status && !VALID_STATUSES.includes(status)) {
-      return res.status(400).json({ error: `Invalid status. Must be one of: ${VALID_STATUSES.join(", ")}` });
+      res.status(400).json({ error: `Invalid status. Must be one of: ${VALID_STATUSES.join(", ")}` });
+      return;
     }
 
     const params: Record<string, any> = { limit };
@@ -94,7 +96,8 @@ router.get("/export/staging-queue", async (req, res, next) => {
     if (format === "json") {
       res.setHeader("Content-Type", "application/json");
       res.setHeader("Content-Disposition", "attachment; filename=staging-queue.json");
-      return res.json(rows);
+      res.json(rows);
+      return;
     }
 
     res.setHeader("Content-Type", "text/csv");

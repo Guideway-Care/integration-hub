@@ -82,7 +82,8 @@ router.post("/incontact/fetch", async (req, res) => {
   try {
     const parsed = fetchBodySchema.safeParse(req.body);
     if (!parsed.success) {
-      return res.status(400).json({ error: parsed.error.issues[0].message });
+      res.status(400).json({ error: parsed.error.issues[0].message });
+      return;
     }
 
     const { token, resourceServerBaseUri } = await getInContactBearerToken();
