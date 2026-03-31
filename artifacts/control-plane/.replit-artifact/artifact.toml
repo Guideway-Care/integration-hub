@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/control-plane/"
+title = "API Controller Hub"
+version = "1.0.0"
+id = "artifacts/control-plane"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/control-plane/" ]
+localPort = 24565
+
+[services.development]
+run = "pnpm --filter @workspace/control-plane run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/control-plane", "run", "build" ]
+publicDir = "artifacts/control-plane/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "24565"
+BASE_PATH = "/control-plane/"

@@ -1,0 +1,24 @@
+apiVersion: run.googleapis.com/v1
+kind: Job
+metadata:
+  name: incontact-call-processor
+  labels:
+    pipeline: incontact
+    app: api-controller-hub
+spec:
+  template:
+    spec:
+      template:
+        spec:
+          serviceAccountName: incontact-job-sa@${GCP_PROJECT_ID}.iam.gserviceaccount.com
+          containers:
+            - image: ${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/control-plane/incontact-processor:latest
+              env:
+                - name: GCP_PROJECT_ID
+                  value: ${GCP_PROJECT_ID}
+              resources:
+                limits:
+                  cpu: "1"
+                  memory: 512Mi
+          timeoutSeconds: 7200
+          maxRetries: 1

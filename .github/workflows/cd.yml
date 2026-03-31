@@ -1,0 +1,237 @@
+name: CD
+
+on:
+  push:
+    branches: [main]
+
+env:
+  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  GCP_REGION: ${{ vars.GCP_REGION || 'us-central1' }}
+  ARTIFACT_REGISTRY: ${{ vars.GCP_REGION || 'us-central1' }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/control-plane
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build-and-push:
+    name: Build & Push Images
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          - name: api-server
+            file: docker/api-server.Dockerfile
+          - name: control-plane
+            file: docker/control-plane.Dockerfile
+          - name: extraction-job
+            file: docker/extraction-job.Dockerfile
+          - name: incontact-processor
+            file: docker/incontact-processor.Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev
+
+      - name: Build and push ${{ matrix.target.name }}
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ matrix.target.file }}
+          push: true
+          tags: |
+            ${{ env.ARTIFACT_REGISTRY }}/${{ matrix.target.name }}:${{ github.sha }}
+            ${{ env.ARTIFACT_REGISTRY }}/${{ matrix.target.name }}:latest
+
+    outputs:
+      image_tag: ${{ github.sha }}
+
+  deploy-api-server:
+    name: Deploy API Server
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    steps:
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.WIF_SERVICE_ACCOUNT }}
+
+      - name: Deploy to Cloud Run
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: api-server
+          image: ${{ env.ARTIFACT_REGISTRY }}/api-server:${{ github.sha }}
+          region: ${{ env.GCP_REGION }}
+          flags: |
+            --service-account=api-server-sa@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+            --add-cloudsql-instances=${{ vars.CLOUD_SQL_CONNECTION }}
+            --set-env-vars=DATABASE_URL=${{ secrets.DATABASE_URL }},NODE_ENV=production,GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }},GCP_REGION=${{ env.GCP_REGION }},EXTRACTION_JOB_NAME=extraction-job,API_SERVER_URL=https://api-server-${{ vars.GCP_PROJECT_ID }}.${{ env.GCP_REGION }}.run.app
+            --min-instances=1
+            --max-instances=10
+            --memory=512Mi
+            --cpu=1
+            --port=8080
+            --no-allow-unauthenticated
+            --ingress=internal-and-cloud-load-balancing
+
+  deploy-control-plane:
+    name: Deploy Control Plane
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    steps:
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.WIF_SERVICE_ACCOUNT }}
+
+      - name: Deploy to Cloud Run
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: control-plane
+          image: ${{ env.ARTIFACT_REGISTRY }}/control-plane:${{ github.sha }}
+          region: ${{ env.GCP_REGION }}
+          flags: |
+            --set-env-vars=API_UPSTREAM=https://api-server-${{ vars.GCP_PROJECT_ID }}.${{ env.GCP_REGION }}.run.app
+            --min-instances=0
+            --max-instances=5
+            --memory=256Mi
+            --cpu=1
+            --port=8080
+            --allow-unauthenticated
+
+  deploy-extraction-job:
+    name: Deploy Extraction Job
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    steps:
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Update Cloud Run Job
+        run: |
+          if gcloud run jobs describe extraction-job --region=${{ env.GCP_REGION }} > /dev/null 2>&1; then
+            gcloud run jobs update extraction-job \
+              --image=${{ env.ARTIFACT_REGISTRY }}/extraction-job:${{ github.sha }} \
+              --region=${{ env.GCP_REGION }} \
+              --service-account=extraction-job-sa@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com \
+              --set-cloudsql-instances=${{ vars.CLOUD_SQL_CONNECTION }} \
+              --set-env-vars=DATABASE_URL=${{ secrets.DATABASE_URL }},NODE_ENV=production,GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }} \
+              --memory=1Gi \
+              --cpu=1 \
+              --max-retries=1 \
+              --task-timeout=3600s
+          else
+            gcloud run jobs create extraction-job \
+              --image=${{ env.ARTIFACT_REGISTRY }}/extraction-job:${{ github.sha }} \
+              --region=${{ env.GCP_REGION }} \
+              --service-account=extraction-job-sa@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com \
+              --set-cloudsql-instances=${{ vars.CLOUD_SQL_CONNECTION }} \
+              --set-env-vars=DATABASE_URL=${{ secrets.DATABASE_URL }},NODE_ENV=production,GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }} \
+              --memory=1Gi \
+              --cpu=1 \
+              --max-retries=1 \
+              --task-timeout=3600s
+          fi
+
+  deploy-incontact-jobs:
+    name: Deploy InContact Jobs
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy InContact Processor Job
+        run: |
+          if gcloud run jobs describe incontact-call-processor --region=${{ env.GCP_REGION }} > /dev/null 2>&1; then
+            gcloud run jobs update incontact-call-processor \
+              --image=${{ env.ARTIFACT_REGISTRY }}/incontact-processor:${{ github.sha }} \
+              --region=${{ env.GCP_REGION }} \
+              --service-account=incontact-job-sa@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com \
+              --set-env-vars=GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }} \
+              --memory=512Mi \
+              --cpu=1 \
+              --max-retries=1 \
+              --task-timeout=7200s
+          else
+            gcloud run jobs create incontact-call-processor \
+              --image=${{ env.ARTIFACT_REGISTRY }}/incontact-processor:${{ github.sha }} \
+              --region=${{ env.GCP_REGION }} \
+              --service-account=incontact-job-sa@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com \
+              --set-env-vars=GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }} \
+              --memory=512Mi \
+              --cpu=1 \
+              --max-retries=1 \
+              --task-timeout=7200s
+          fi
+
+      - name: Deploy InContact Loader Job
+        run: |
+          if gcloud run jobs describe incontact-call-loader --region=${{ env.GCP_REGION }} > /dev/null 2>&1; then
+            gcloud run jobs update incontact-call-loader \
+              --image=${{ env.ARTIFACT_REGISTRY }}/incontact-processor:${{ github.sha }} \
+              --region=${{ env.GCP_REGION }} \
+              --service-account=incontact-job-sa@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com \
+              --set-env-vars=GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }} \
+              --command=node,loader.js \
+              --memory=512Mi \
+              --cpu=1 \
+              --max-retries=0 \
+              --task-timeout=1800s
+          else
+            gcloud run jobs create incontact-call-loader \
+              --image=${{ env.ARTIFACT_REGISTRY }}/incontact-processor:${{ github.sha }} \
+              --region=${{ env.GCP_REGION }} \
+              --service-account=incontact-job-sa@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com \
+              --set-env-vars=GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }} \
+              --command=node,loader.js \
+              --memory=512Mi \
+              --cpu=1 \
+              --max-retries=0 \
+              --task-timeout=1800s
+          fi
+
+  sync-schedules:
+    name: Sync Cloud Scheduler
+    runs-on: ubuntu-latest
+    needs: [deploy-api-server, deploy-extraction-job]
+    steps:
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.WIF_SERVICE_ACCOUNT }}
+
+      - name: Sync schedules via API
+        run: |
+          API_URL="https://api-server-${{ vars.GCP_PROJECT_ID }}.${{ env.GCP_REGION }}.run.app"
+          curl -s -f -X POST "$API_URL/api/scheduler/sync" \
+            -H "Content-Type: application/json" \
+            || echo "Schedule sync skipped (API may not be ready yet)"
