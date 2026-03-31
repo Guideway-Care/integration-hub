@@ -11,11 +11,12 @@ router.get("/monitor/contact-daily-counts", async (req, res, next) => {
 
     const query = `
       SELECT
-        DATE(contact_start_date) AS contact_date,
-        EXTRACT(DAYOFWEEK FROM DATE(contact_start_date)) AS dow,
+        DATE(start_date) AS contact_date,
+        EXTRACT(DAYOFWEEK FROM DATE(start_date)) AS dow,
         COUNT(*) AS contact_count
-      FROM \`${projectId}.incontact.calls\`
-      WHERE DATE(contact_start_date) >= @startDate
+      FROM \`${projectId}.incontact.call_recordings\`
+      WHERE start_date IS NOT NULL
+        AND DATE(start_date) >= @startDate
       GROUP BY contact_date, dow
       ORDER BY contact_date
     `;
@@ -23,7 +24,6 @@ router.get("/monitor/contact-daily-counts", async (req, res, next) => {
     const [rows] = await bq.query({
       query,
       params: { startDate },
-      location: "us-central1",
     });
 
     res.json({ data: rows });
