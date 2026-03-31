@@ -22,10 +22,8 @@ const navItems = [
   { label: "Source Systems", href: "/source-systems", icon: Server },
   { label: "Endpoints", href: "/endpoints", icon: Plug },
   { label: "Runs", href: "/runs", icon: Play },
-  { label: "Monitor", href: "/monitor", icon: BarChart3 },
   { label: "InContact", href: "/incontact", icon: Phone },
-  { label: "Staging Queue", href: "/staging", icon: Database },
-  { label: "Recordings", href: "/recordings", icon: FileCode },
+  { label: "Monitor", href: "/monitor", icon: BarChart3 },
   { label: "Audit Log", href: "/audit", icon: ClipboardList },
   { label: "Scripts", href: "/scripts", icon: Settings },
 ];
