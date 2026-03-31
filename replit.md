@@ -77,10 +77,13 @@ Express 5 API server. All routes mount at `/api`.
   - `src/services/gcp-clients.ts` — BigQuery, Secret Manager, Storage, Cloud Run clients
   - `src/services/cloud-run.ts` — Cloud Run job execution service
 - **Routes** (`src/routes/`):
-  - `source-systems.ts` — CRUD for source systems
-  - `endpoints.ts` — CRUD for endpoint definitions
+  - `dashboard.ts` — Aggregated summary metrics (DB + BigQuery)
+  - `audit.ts` — Audit log entries with filtering/pagination; exports `logAudit()` helper
+  - `export.ts` — CSV/JSON data export for recordings and staging queue
+  - `source-systems.ts` — CRUD for source systems (audit-logged)
+  - `endpoints.ts` — CRUD for endpoint definitions (audit-logged)
   - `parameters.ts` — CRUD for endpoint parameters
-  - `runs.ts` — Extraction run management (create, cancel, replay, detail with events)
+  - `runs.ts` — Extraction run management with audit logging (create, cancel, replay, detail with events)
   - `scheduler.ts` — Cloud Scheduler sync
   - `monitor.ts` — BigQuery contact daily counts for heatmap
   - `incontact.ts` — InContact API proxy (auth test, fetch, endpoints list)
@@ -93,8 +96,9 @@ Express 5 API server. All routes mount at `/api`.
 
 React + Vite frontend dashboard. "API Controller Hub" branding throughout.
 
-- **Layout**: Sidebar navigation with 8 sections
+- **Layout**: Sidebar navigation with 10 sections
 - **Pages**:
+  - Dashboard — Homepage with summary metrics cards, extraction pipeline stats, InContact staging health, recent runs
   - Source Systems — CRUD cards for API source systems
   - Endpoints — Table with method badges, pagination/incremental config
   - Runs — Table with status badges, cancel/replay actions
@@ -102,8 +106,9 @@ React + Vite frontend dashboard. "API Controller Hub" branding throughout.
   - Run New — Form to trigger manual extraction runs
   - Monitor — BigQuery contact volume heatmap
   - InContact — API explorer with auth test + endpoint fetch
-  - Staging Queue — BigQuery staging queue management + job triggers
-  - Recordings — Processed call recordings table
+  - Staging Queue — BigQuery staging queue management + job triggers (with CSV/JSON export)
+  - Recordings — Processed call recordings table (with CSV/JSON export)
+  - Audit Log — Filterable audit trail of all platform changes with pagination
   - Scripts — Copiable BigQuery SQL setup scripts
 - **API Client**: `src/lib/api.ts` — fetch wrapper proxied to API server via Vite
 - Vite proxy: `/api` → `http://0.0.0.0:8080`
@@ -112,7 +117,7 @@ React + Vite frontend dashboard. "API Controller Hub" branding throughout.
 
 Database layer using Drizzle ORM with PostgreSQL. Exports pool, db client, and schema.
 
-- **Tables**: `sourceSystem`, `endpointDefinition`, `endpointParameter`, `extractionRun`, `extractionEvent`
+- **Tables**: `sourceSystem`, `endpointDefinition`, `endpointParameter`, `extractionRun`, `extractionEvent`, `auditLog`
 - `drizzle.config.ts` — requires `DATABASE_URL`
 - Push schema: `pnpm --filter @workspace/db run push`
 

@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import Layout from "@/components/layout";
+import DashboardPage from "@/pages/dashboard";
 import SourceSystemsPage from "@/pages/source-systems";
 import EndpointsPage from "@/pages/endpoints";
 import RunsPage from "@/pages/runs";
@@ -12,6 +13,7 @@ import MonitorPage from "@/pages/monitor";
 import InContactPage from "@/pages/incontact";
 import StagingPage from "@/pages/staging";
 import RecordingsPage from "@/pages/recordings";
+import AuditPage from "@/pages/audit";
 import ScriptsPage from "@/pages/scripts";
 import NotFound from "@/pages/not-found";
 
@@ -28,7 +30,8 @@ function Router() {
   return (
     <Layout>
       <Switch>
-        <Route path="/" component={SourceSystemsPage} />
+        <Route path="/" component={DashboardPage} />
+        <Route path="/source-systems" component={SourceSystemsPage} />
         <Route path="/endpoints" component={EndpointsPage} />
         <Route path="/runs" component={RunsPage} />
         <Route path="/runs/new" component={RunNewPage} />
@@ -37,6 +40,7 @@ function Router() {
         <Route path="/incontact" component={InContactPage} />
         <Route path="/staging" component={StagingPage} />
         <Route path="/recordings" component={RecordingsPage} />
+        <Route path="/audit" component={AuditPage} />
         <Route path="/scripts" component={ScriptsPage} />
         <Route component={NotFound} />
       </Switch>

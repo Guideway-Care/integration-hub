@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useState } from "react";
-import { Database, Plus, RotateCcw, Trash2, Play, Loader2 } from "lucide-react";
+import { Database, Plus, RotateCcw, Trash2, Play, Loader2, Download } from "lucide-react";
 
 interface StagingSummary {
   pending: number;
@@ -88,11 +88,31 @@ export default function StagingPage() {
 
   return (
     <div>
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-foreground">Staging Queue</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Manage the InContact call recording staging queue in BigQuery
-        </p>
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-foreground">Staging Queue</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Manage the InContact call recording staging queue in BigQuery
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <a
+            href="/api/export/staging-queue?format=csv"
+            download
+            className="text-xs border border-border rounded px-3 py-1.5 hover:bg-muted transition-colors flex items-center gap-1.5"
+          >
+            <Download className="w-3 h-3" />
+            CSV
+          </a>
+          <a
+            href="/api/export/staging-queue?format=json"
+            download
+            className="text-xs border border-border rounded px-3 py-1.5 hover:bg-muted transition-colors flex items-center gap-1.5"
+          >
+            <Download className="w-3 h-3" />
+            JSON
+          </a>
+        </div>
       </div>
 
       {queueError ? (

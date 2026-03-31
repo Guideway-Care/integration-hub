@@ -8,10 +8,16 @@ import schedulerRouter from "./scheduler";
 import monitorRouter from "./monitor";
 import incontactRouter from "./incontact";
 import bqRouter from "./bq";
+import dashboardRouter from "./dashboard";
+import auditRouter from "./audit";
+import exportRouter from "./export";
 
 const router: IRouter = Router();
 
 router.use(healthRouter);
+router.use(dashboardRouter);
+router.use(auditRouter);
+router.use(exportRouter);
 router.use(sourceSystemsRouter);
 router.use(endpointsRouter);
 router.use(parametersRouter);

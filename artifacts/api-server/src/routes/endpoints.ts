@@ -4,6 +4,7 @@ import { db } from "@workspace/db";
 import { endpointDefinitionTable, endpointParameterTable } from "@workspace/db/schema";
 import { CreateEndpointDefinitionSchema, UpdateEndpointDefinitionSchema } from "@workspace/api-zod";
 import { AppError } from "../middlewares/error-handler";
+import { logAudit } from "./audit";
 
 const router: IRouter = Router();
 
@@ -51,6 +52,7 @@ router.post("/endpoints", async (req, res, next) => {
       throw new AppError(409, `Endpoint '${body.endpointId}' already exists`);
     }
     const [created] = await db.insert(endpointDefinitionTable).values(body).returning();
+    await logAudit("CREATE", "endpoint", body.endpointId, undefined, { sourceSystemId: body.sourceSystemId });
     res.status(201).json({ data: created });
   } catch (err) {
     next(err);
@@ -68,6 +70,7 @@ router.put("/endpoints/:id", async (req, res, next) => {
     if (!updated) {
       throw new AppError(404, `Endpoint '${req.params.id}' not found`);
     }
+    await logAudit("UPDATE", "endpoint", req.params.id, undefined, body);
     res.json({ data: updated });
   } catch (err) {
     next(err);
@@ -84,6 +87,7 @@ router.delete("/endpoints/:id", async (req, res, next) => {
     if (!updated) {
       throw new AppError(404, `Endpoint '${req.params.id}' not found`);
     }
+    await logAudit("DEACTIVATE", "endpoint", req.params.id);
     res.json({ data: updated });
   } catch (err) {
     next(err);

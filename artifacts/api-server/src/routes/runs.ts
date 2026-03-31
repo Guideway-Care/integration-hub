@@ -10,6 +10,7 @@ import {
 } from "@workspace/db/schema";
 import { TriggerRunSchema } from "@workspace/api-zod";
 import { AppError } from "../middlewares/error-handler";
+import { logAudit } from "./audit";
 
 const router: IRouter = Router();
 
@@ -130,6 +131,7 @@ router.post("/runs", async (req, res, next) => {
         .where(eq(extractionRunTable.runId, created.runId));
     }
 
+    await logAudit("TRIGGER_RUN", "extraction_run", created.runId, body.requestedBy ?? undefined, { endpointId: body.endpointId, runType: body.runType });
     res.status(201).json({ data: { ...created, cloudRunExecutionId: executionName } });
   } catch (err) {
     next(err);
@@ -252,6 +254,7 @@ router.patch("/runs/:id/cancel", async (req, res, next) => {
       message: "Run cancelled by operator",
     });
 
+    await logAudit("CANCEL_RUN", "extraction_run", req.params.id);
     res.json({ data: updated });
   } catch (err) {
     next(err);
@@ -297,6 +300,7 @@ router.post("/runs/:id/replay", async (req, res, next) => {
         .where(eq(extractionRunTable.runId, created.runId));
     }
 
+    await logAudit("REPLAY_RUN", "extraction_run", created.runId, undefined, { originalRunId: req.params.id });
     res.status(201).json({ data: { ...created, cloudRunExecutionId: executionName } });
   } catch (err) {
     next(err);
