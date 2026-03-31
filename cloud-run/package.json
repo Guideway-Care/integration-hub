@@ -1,0 +1,10 @@
+{
+  "name": "incontact-processor",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@google-cloud/bigquery": "^7.0.0",
+    "@google-cloud/storage": "^7.0.0",
+    "@google-cloud/secret-manager": "^5.0.0"
+  }
+}
