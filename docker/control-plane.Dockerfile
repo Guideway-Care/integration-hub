@@ -20,7 +20,7 @@ COPY --from=deps /app/artifacts/control-plane/node_modules ./artifacts/control-p
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc tsconfig.base.json tsconfig.json ./
 COPY lib/ lib/
 COPY artifacts/control-plane/ artifacts/control-plane/
-RUN pnpm run typecheck:libs
+RUN npx tsc --build lib/db lib/api-zod lib/api-client-react
 RUN pnpm --filter @workspace/control-plane run build
 
 FROM nginx:alpine AS runtime
