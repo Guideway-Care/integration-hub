@@ -75,9 +75,9 @@ jobs:
           image: ${{ env.ARTIFACT_REGISTRY }}/api-server:${{ github.sha }}
           region: ${{ env.GCP_REGION }}
           flags: |
-            --service-account=api-server-sa@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+            --service-account=${{ vars.WIF_SERVICE_ACCOUNT }}
             --add-cloudsql-instances=${{ vars.CLOUD_SQL_CONNECTION }}
-            --set-env-vars=DATABASE_URL=${{ secrets.DATABASE_URL }},NODE_ENV=production,GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }},GCP_REGION=${{ env.GCP_REGION }},EXTRACTION_JOB_NAME=extraction-job,API_SERVER_URL=https://api-server-${{ vars.GCP_PROJECT_ID }}.${{ env.GCP_REGION }}.run.app
+            --set-env-vars=DATABASE_URL=${{ secrets.DATABASE_URL }},NODE_ENV=production,GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }},GCP_REGION=${{ env.GCP_REGION }},EXTRACTION_JOB_NAME=extraction-job,API_SERVER_URL=https://api-server-g3tph2rhoa-uc.a.run.app
             --min-instances=1
             --max-instances=10
             --memory=512Mi
@@ -104,7 +104,7 @@ jobs:
           image: ${{ env.ARTIFACT_REGISTRY }}/control-plane:${{ github.sha }}
           region: ${{ env.GCP_REGION }}
           flags: |
-            --set-env-vars=API_UPSTREAM=https://api-server-${{ vars.GCP_PROJECT_ID }}.${{ env.GCP_REGION }}.run.app
+            --set-env-vars=API_UPSTREAM=https://api-server-g3tph2rhoa-uc.a.run.app
             --min-instances=0
             --max-instances=5
             --memory=256Mi
@@ -132,7 +132,7 @@ jobs:
             gcloud run jobs update extraction-job \
               --image=${{ env.ARTIFACT_REGISTRY }}/extraction-job:${{ github.sha }} \
               --region=${{ env.GCP_REGION }} \
-              --service-account=extraction-job-sa@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com \
+              --service-account=${{ vars.WIF_SERVICE_ACCOUNT }} \
               --set-cloudsql-instances=${{ vars.CLOUD_SQL_CONNECTION }} \
               --set-env-vars=DATABASE_URL=${{ secrets.DATABASE_URL }},NODE_ENV=production,GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }} \
               --memory=1Gi \
@@ -143,7 +143,7 @@ jobs:
             gcloud run jobs create extraction-job \
               --image=${{ env.ARTIFACT_REGISTRY }}/extraction-job:${{ github.sha }} \
               --region=${{ env.GCP_REGION }} \
-              --service-account=extraction-job-sa@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com \
+              --service-account=${{ vars.WIF_SERVICE_ACCOUNT }} \
               --set-cloudsql-instances=${{ vars.CLOUD_SQL_CONNECTION }} \
               --set-env-vars=DATABASE_URL=${{ secrets.DATABASE_URL }},NODE_ENV=production,GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }} \
               --memory=1Gi \
@@ -174,7 +174,7 @@ jobs:
             gcloud run jobs update incontact-call-processor \
               --image=${{ env.ARTIFACT_REGISTRY }}/incontact-processor:${{ github.sha }} \
               --region=${{ env.GCP_REGION }} \
-              --service-account=incontact-job-sa@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com \
+              --service-account=${{ vars.WIF_SERVICE_ACCOUNT }} \
               --set-env-vars=GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }} \
               --memory=512Mi \
               --cpu=1 \
@@ -184,7 +184,7 @@ jobs:
             gcloud run jobs create incontact-call-processor \
               --image=${{ env.ARTIFACT_REGISTRY }}/incontact-processor:${{ github.sha }} \
               --region=${{ env.GCP_REGION }} \
-              --service-account=incontact-job-sa@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com \
+              --service-account=${{ vars.WIF_SERVICE_ACCOUNT }} \
               --set-env-vars=GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }} \
               --memory=512Mi \
               --cpu=1 \
@@ -198,7 +198,7 @@ jobs:
             gcloud run jobs update incontact-call-loader \
               --image=${{ env.ARTIFACT_REGISTRY }}/incontact-processor:${{ github.sha }} \
               --region=${{ env.GCP_REGION }} \
-              --service-account=incontact-job-sa@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com \
+              --service-account=${{ vars.WIF_SERVICE_ACCOUNT }} \
               --set-env-vars=GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }} \
               --command=node,loader.js \
               --memory=512Mi \
@@ -209,7 +209,7 @@ jobs:
             gcloud run jobs create incontact-call-loader \
               --image=${{ env.ARTIFACT_REGISTRY }}/incontact-processor:${{ github.sha }} \
               --region=${{ env.GCP_REGION }} \
-              --service-account=incontact-job-sa@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com \
+              --service-account=${{ vars.WIF_SERVICE_ACCOUNT }} \
               --set-env-vars=GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }} \
               --command=node,loader.js \
               --memory=512Mi \
@@ -231,7 +231,7 @@ jobs:
 
       - name: Sync schedules via API
         run: |
-          API_URL="https://api-server-${{ vars.GCP_PROJECT_ID }}.${{ env.GCP_REGION }}.run.app"
+          API_URL="https://api-server-g3tph2rhoa-uc.a.run.app"
           curl -s -f -X POST "$API_URL/api/scheduler/sync" \
             -H "Content-Type: application/json" \
             || echo "Schedule sync skipped (API may not be ready yet)"

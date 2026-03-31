@@ -24,7 +24,11 @@ RUN npx tsc --build lib/db lib/api-zod lib/api-client-react
 RUN pnpm --filter @workspace/control-plane run build
 
 FROM nginx:alpine AS runtime
+RUN apk add --no-cache gettext
 COPY --from=build /app/artifacts/control-plane/dist/public /usr/share/nginx/html
-COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
+COPY docker/nginx.conf.template /etc/nginx/templates/default.conf.template
+COPY docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENV API_UPSTREAM=http://localhost:8081
 EXPOSE 8080
-CMD ["nginx", "-g", "daemon off;"]
+ENTRYPOINT ["/entrypoint.sh"]
