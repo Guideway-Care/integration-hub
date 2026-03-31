@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useState } from "react";
 import { ClipboardList, RefreshCw, Filter } from "lucide-react";
+import { TableSkeleton } from "@/components/table-skeleton";
 
 interface AuditEntry {
   id: string;
@@ -84,10 +85,7 @@ export default function AuditPage() {
       </div>
 
       {isLoading ? (
-        <div className="text-center py-12 text-muted-foreground">
-          <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2" />
-          Loading audit log...
-        </div>
+        <TableSkeleton rows={8} cols={5} />
       ) : error ? (
         <div className="border border-destructive/30 rounded-lg p-4 bg-destructive/5">
           <p className="text-sm text-destructive">Failed to load audit log</p>

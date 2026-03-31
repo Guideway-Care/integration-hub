@@ -16,6 +16,7 @@ import {
   RefreshCw,
   TrendingUp,
 } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
 
 interface DashboardData {
   sourceSystems: { total: number; active: number };
@@ -98,9 +99,38 @@ export default function DashboardPage() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center py-20">
-        <RefreshCw className="w-5 h-5 animate-spin text-muted-foreground mr-2" />
-        <span className="text-muted-foreground">Loading dashboard...</span>
+      <div>
+        <div className="flex items-center justify-between mb-6">
+          <Skeleton className="h-8 w-48" />
+          <Skeleton className="h-9 w-28 rounded-md" />
+        </div>
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 mb-8">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="border border-border rounded-lg p-4 bg-card">
+              <Skeleton className="h-5 w-5 mb-2" />
+              <Skeleton className="h-7 w-16 mb-1" />
+              <Skeleton className="h-3 w-24" />
+            </div>
+          ))}
+        </div>
+        <div className="grid gap-6 md:grid-cols-2 mb-8">
+          <div className="border border-border rounded-lg p-5 bg-card">
+            <Skeleton className="h-5 w-40 mb-4" />
+            <div className="space-y-3">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <Skeleton key={i} className="h-4 w-full" />
+              ))}
+            </div>
+          </div>
+          <div className="border border-border rounded-lg p-5 bg-card">
+            <Skeleton className="h-5 w-40 mb-4" />
+            <div className="space-y-3">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <Skeleton key={i} className="h-4 w-full" />
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
     );
   }

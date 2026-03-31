@@ -2,6 +2,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { Link } from "wouter";
 import { Play, XCircle, RotateCcw, Eye, Clock, CheckCircle, AlertCircle, Ban } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { TableSkeleton } from "@/components/table-skeleton";
 
 interface Run {
   runId: string;
@@ -29,8 +31,9 @@ const statusConfig: Record<string, { icon: any; color: string }> = {
 
 export default function RunsPage() {
   const queryClient = useQueryClient();
+  const { toast } = useToast();
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, error } = useQuery({
     queryKey: ["runs"],
     queryFn: () => api.get<{ data: Run[]; meta: { total: number } }>("/runs?limit=50"),
     refetchInterval: 5000,
@@ -38,12 +41,24 @@ export default function RunsPage() {
 
   const cancelMutation = useMutation({
     mutationFn: (id: string) => api.patch(`/runs/${id}/cancel`),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["runs"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["runs"] });
+      toast({ title: "Run cancelled", description: "The extraction run has been cancelled." });
+    },
+    onError: (err) => {
+      toast({ title: "Cancel failed", description: (err as Error).message, variant: "destructive" });
+    },
   });
 
   const replayMutation = useMutation({
     mutationFn: (id: string) => api.post(`/runs/${id}/replay`),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["runs"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["runs"] });
+      toast({ title: "Replay started", description: "A new extraction run has been triggered." });
+    },
+    onError: (err) => {
+      toast({ title: "Replay failed", description: (err as Error).message, variant: "destructive" });
+    },
   });
 
   const runs = data?.data ?? [];
@@ -65,7 +80,12 @@ export default function RunsPage() {
       </div>
 
       {isLoading ? (
-        <div className="text-center py-12 text-muted-foreground">Loading...</div>
+        <TableSkeleton rows={6} cols={9} />
+      ) : error ? (
+        <div className="border border-destructive/30 rounded-lg p-4 bg-destructive/5">
+          <p className="text-sm text-destructive">Failed to load extraction runs.</p>
+          <p className="text-xs text-muted-foreground mt-1">{(error as Error).message}</p>
+        </div>
       ) : runs.length === 0 ? (
         <div className="text-center py-12 border border-dashed border-border rounded-lg">
           <Play className="w-10 h-10 mx-auto text-muted-foreground mb-3" />

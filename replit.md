@@ -98,18 +98,20 @@ React + Vite frontend dashboard. "API Controller Hub" branding throughout.
 
 - **Layout**: Sidebar navigation with 10 sections
 - **Pages**:
-  - Dashboard — Homepage with summary metrics cards, extraction pipeline stats, InContact staging health, recent runs
-  - Source Systems — CRUD cards for API source systems
+  - Dashboard — Homepage with summary metrics cards, extraction pipeline stats, InContact staging health, recent runs (skeleton loading)
+  - Source Systems — CRUD cards for API source systems (toast notifications on create/update/delete)
   - Endpoints — Table with method badges, pagination/incremental config
-  - Runs — Table with status badges, cancel/replay actions
+  - Runs — Table with status badges, cancel/replay actions (toast notifications, skeleton loading, error state)
   - Run Detail — Metrics cards + event log timeline
-  - Run New — Form to trigger manual extraction runs
+  - Run New — Form to trigger manual extraction runs (toast on success/error)
   - Monitor — BigQuery contact volume heatmap
-  - InContact — API explorer with auth test + endpoint fetch
-  - Staging Queue — BigQuery staging queue management + job triggers (with CSV/JSON export)
-  - Recordings — Processed call recordings table (with CSV/JSON export)
-  - Audit Log — Filterable audit trail of all platform changes with pagination
+  - InContact — API explorer with auth test + endpoint fetch (toast notifications)
+  - Staging Queue — BigQuery staging queue management + job triggers (with CSV/JSON export, toasts, skeleton loading, pagination)
+  - Recordings — Processed call recordings table (with CSV/JSON export, search filter, pagination with 50/page, skeleton loading)
+  - Audit Log — Filterable audit trail of all platform changes with pagination (skeleton loading)
   - Scripts — Copiable BigQuery SQL setup scripts
+- **Shared components**: `table-skeleton.tsx` (TableSkeleton, CardSkeleton, MetricsSkeleton)
+- **Toast system**: shadcn/ui toast with `useToast` hook, Toaster mounted in App.tsx
 - **API Client**: `src/lib/api.ts` — fetch wrapper proxied to API server via Vite
 - Vite proxy: `/api` → `http://0.0.0.0:8080`
 

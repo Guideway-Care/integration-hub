@@ -2,6 +2,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useState } from "react";
 import { Plus, Edit, Trash2, Server, ExternalLink } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { Skeleton } from "@/components/ui/skeleton";
 
 interface SourceSystem {
   sourceSystemId: string;
@@ -17,6 +19,7 @@ interface SourceSystem {
 
 export default function SourceSystemsPage() {
   const queryClient = useQueryClient();
+  const { toast } = useToast();
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
 
@@ -27,7 +30,13 @@ export default function SourceSystemsPage() {
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/source-systems/${id}`),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["source-systems"] }),
+    onSuccess: (_d, id) => {
+      queryClient.invalidateQueries({ queryKey: ["source-systems"] });
+      toast({ title: "System deactivated", description: `Source system "${id}" has been deactivated.` });
+    },
+    onError: (err) => {
+      toast({ title: "Error", description: (err as Error).message, variant: "destructive" });
+    },
   });
 
   const systems = data?.data ?? [];
@@ -58,7 +67,27 @@ export default function SourceSystemsPage() {
       )}
 
       {isLoading ? (
-        <div className="text-center py-12 text-muted-foreground">Loading...</div>
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="border border-border rounded-lg p-4 bg-card">
+              <div className="flex items-start justify-between mb-2">
+                <div>
+                  <Skeleton className="h-5 w-32 mb-1" />
+                  <Skeleton className="h-3 w-24" />
+                </div>
+                <Skeleton className="h-5 w-14 rounded-full" />
+              </div>
+              <div className="space-y-2 mt-3">
+                <Skeleton className="h-3 w-48" />
+                <Skeleton className="h-3 w-20" />
+              </div>
+              <div className="flex gap-2 mt-4">
+                <Skeleton className="h-8 w-16 rounded-md" />
+                <Skeleton className="h-8 w-24 rounded-md" />
+              </div>
+            </div>
+          ))}
+        </div>
       ) : systems.length === 0 ? (
         <div className="text-center py-12 border border-dashed border-border rounded-lg">
           <Server className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
@@ -134,6 +163,7 @@ function SourceSystemForm({
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
+  const { toast } = useToast();
   const existing = editId ? systems.find((s) => s.sourceSystemId === editId) : null;
   const [form, setForm] = useState({
     sourceSystemId: existing?.sourceSystemId ?? "",
@@ -152,7 +182,14 @@ function SourceSystemForm({
         : api.post("/source-systems", form),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["source-systems"] });
+      toast({
+        title: editId ? "System updated" : "System created",
+        description: `Source system "${form.sourceSystemName || form.sourceSystemId}" has been ${editId ? "updated" : "created"}.`,
+      });
       onClose();
+    },
+    onError: (err) => {
+      toast({ title: "Error", description: (err as Error).message, variant: "destructive" });
     },
   });
 

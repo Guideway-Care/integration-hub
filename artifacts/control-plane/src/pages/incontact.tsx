@@ -2,8 +2,10 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useState } from "react";
 import { Phone, CheckCircle, XCircle, Send, Loader2 } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 export default function InContactPage() {
+  const { toast } = useToast();
   const [endpoint, setEndpoint] = useState("/media-playback/v1/contacts");
   const [params, setParams] = useState("");
   const [fetchResult, setFetchResult] = useState<any>(null);
@@ -21,6 +23,12 @@ export default function InContactPage() {
 
   const authTestMutation = useMutation({
     mutationFn: () => api.post<any>("/incontact/auth-test"),
+    onSuccess: (data: any) => {
+      toast({ title: "Authentication successful", description: `Token length: ${data.tokenLength}` });
+    },
+    onError: (err) => {
+      toast({ title: "Authentication failed", description: (err as Error).message, variant: "destructive" });
+    },
   });
 
   const fetchMutation = useMutation({
@@ -36,7 +44,13 @@ export default function InContactPage() {
       }
       return api.post<any>("/incontact/fetch", { endpoint, params: parsedParams });
     },
-    onSuccess: (data) => setFetchResult(data),
+    onSuccess: (data) => {
+      setFetchResult(data);
+      toast({ title: "Request completed", description: `Status: ${(data as any).statusCode} ${(data as any).statusText}` });
+    },
+    onError: (err) => {
+      toast({ title: "Request failed", description: (err as Error).message, variant: "destructive" });
+    },
   });
 
   const allowedEndpoints = endpointsData ?? [];
@@ -85,16 +99,6 @@ export default function InContactPage() {
             )}
             Test Authentication
           </button>
-          {authTestMutation.data && (
-            <div className="mt-2 text-xs text-green-600">
-              Authenticated. Token length: {authTestMutation.data.tokenLength}
-            </div>
-          )}
-          {authTestMutation.error && (
-            <div className="mt-2 text-xs text-destructive">
-              {(authTestMutation.error as Error).message}
-            </div>
-          )}
         </div>
       </div>
 

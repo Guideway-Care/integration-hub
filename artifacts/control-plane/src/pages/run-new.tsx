@@ -3,6 +3,7 @@ import { api } from "@/lib/api";
 import { useState } from "react";
 import { useLocation, Link } from "wouter";
 import { ArrowLeft, Play } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 export default function RunNewPage() {
   const [, navigate] = useLocation();
@@ -29,6 +30,8 @@ export default function RunNewPage() {
     windowEndTs: "",
   });
 
+  const { toast } = useToast();
+
   const mutation = useMutation({
     mutationFn: () =>
       api.post("/runs", {
@@ -40,7 +43,11 @@ export default function RunNewPage() {
         windowEndTs: form.windowEndTs || null,
       }),
     onSuccess: (data: any) => {
+      toast({ title: "Run triggered", description: "Extraction run has been created successfully." });
       navigate(`/runs/${data.data.runId}`);
+    },
+    onError: (err) => {
+      toast({ title: "Failed to trigger run", description: (err as Error).message, variant: "destructive" });
     },
   });
 
