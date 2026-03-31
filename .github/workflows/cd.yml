@@ -74,17 +74,16 @@ jobs:
           service: api-server
           image: ${{ env.ARTIFACT_REGISTRY }}/api-server:${{ github.sha }}
           region: ${{ env.GCP_REGION }}
-          flags: |
-            --service-account=${{ vars.WIF_SERVICE_ACCOUNT }}
+          flags: >-
+            --service-account=api-controller-hub-dev@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com
             --add-cloudsql-instances=${{ vars.CLOUD_SQL_CONNECTION }}
-            --set-env-vars=DATABASE_URL=${{ secrets.DATABASE_URL }},NODE_ENV=production,GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }},GCP_REGION=${{ env.GCP_REGION }},EXTRACTION_JOB_NAME=extraction-job,API_SERVER_URL=https://api-server-g3tph2rhoa-uc.a.run.app
-            --min-instances=1
+            --set-env-vars=DATABASE_URL=${{ secrets.DATABASE_URL }},NODE_ENV=production,GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }}
+            --min-instances=0
             --max-instances=10
             --memory=512Mi
             --cpu=1
             --port=8080
-            --no-allow-unauthenticated
-            --ingress=internal-and-cloud-load-balancing
+            --allow-unauthenticated
 
   deploy-control-plane:
     name: Deploy Control Plane
@@ -103,7 +102,7 @@ jobs:
           service: control-plane
           image: ${{ env.ARTIFACT_REGISTRY }}/control-plane:${{ github.sha }}
           region: ${{ env.GCP_REGION }}
-          flags: |
+          flags: >-
             --set-env-vars=API_UPSTREAM=https://api-server-g3tph2rhoa-uc.a.run.app
             --min-instances=0
             --max-instances=5
@@ -132,7 +131,6 @@ jobs:
             gcloud run jobs update extraction-job \
               --image=${{ env.ARTIFACT_REGISTRY }}/extraction-job:${{ github.sha }} \
               --region=${{ env.GCP_REGION }} \
-              --service-account=${{ vars.WIF_SERVICE_ACCOUNT }} \
               --set-cloudsql-instances=${{ vars.CLOUD_SQL_CONNECTION }} \
               --set-env-vars=DATABASE_URL=${{ secrets.DATABASE_URL }},NODE_ENV=production,GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }} \
               --memory=1Gi \
@@ -143,7 +141,6 @@ jobs:
             gcloud run jobs create extraction-job \
               --image=${{ env.ARTIFACT_REGISTRY }}/extraction-job:${{ github.sha }} \
               --region=${{ env.GCP_REGION }} \
-              --service-account=${{ vars.WIF_SERVICE_ACCOUNT }} \
               --set-cloudsql-instances=${{ vars.CLOUD_SQL_CONNECTION }} \
               --set-env-vars=DATABASE_URL=${{ secrets.DATABASE_URL }},NODE_ENV=production,GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }} \
               --memory=1Gi \
@@ -174,7 +171,6 @@ jobs:
             gcloud run jobs update incontact-call-processor \
               --image=${{ env.ARTIFACT_REGISTRY }}/incontact-processor:${{ github.sha }} \
               --region=${{ env.GCP_REGION }} \
-              --service-account=${{ vars.WIF_SERVICE_ACCOUNT }} \
               --set-env-vars=GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }} \
               --memory=512Mi \
               --cpu=1 \
@@ -184,7 +180,6 @@ jobs:
             gcloud run jobs create incontact-call-processor \
               --image=${{ env.ARTIFACT_REGISTRY }}/incontact-processor:${{ github.sha }} \
               --region=${{ env.GCP_REGION }} \
-              --service-account=${{ vars.WIF_SERVICE_ACCOUNT }} \
               --set-env-vars=GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }} \
               --memory=512Mi \
               --cpu=1 \
@@ -198,7 +193,6 @@ jobs:
             gcloud run jobs update incontact-call-loader \
               --image=${{ env.ARTIFACT_REGISTRY }}/incontact-processor:${{ github.sha }} \
               --region=${{ env.GCP_REGION }} \
-              --service-account=${{ vars.WIF_SERVICE_ACCOUNT }} \
               --set-env-vars=GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }} \
               --command=node,loader.js \
               --memory=512Mi \
@@ -209,7 +203,6 @@ jobs:
             gcloud run jobs create incontact-call-loader \
               --image=${{ env.ARTIFACT_REGISTRY }}/incontact-processor:${{ github.sha }} \
               --region=${{ env.GCP_REGION }} \
-              --service-account=${{ vars.WIF_SERVICE_ACCOUNT }} \
               --set-env-vars=GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }} \
               --command=node,loader.js \
               --memory=512Mi \
