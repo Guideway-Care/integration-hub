@@ -22,6 +22,9 @@ import {
   Send,
   ChevronDown,
   ChevronUp,
+  Filter,
+  Calendar,
+  X,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { MetricsSkeleton, TableSkeleton } from "@/components/table-skeleton";
@@ -301,6 +304,49 @@ export default function InContactPage() {
       endDate: yesterday.toISOString().split("T")[0],
     };
   });
+
+  type FilterPreset = "all" | "today" | "yesterday" | "7d" | "30d" | "custom";
+  const [filterPreset, setFilterPreset] = useState<FilterPreset>("all");
+  const [filterStartDate, setFilterStartDate] = useState("");
+  const [filterEndDate, setFilterEndDate] = useState("");
+
+  function getFilterDates(): { startDate?: string; endDate?: string } {
+    const today = new Date();
+    const fmt = (d: Date) => d.toISOString().split("T")[0];
+    switch (filterPreset) {
+      case "today":
+        return { startDate: fmt(today), endDate: fmt(today) };
+      case "yesterday": {
+        const y = new Date(today);
+        y.setDate(y.getDate() - 1);
+        return { startDate: fmt(y), endDate: fmt(y) };
+      }
+      case "7d": {
+        const d = new Date(today);
+        d.setDate(d.getDate() - 6);
+        return { startDate: fmt(d), endDate: fmt(today) };
+      }
+      case "30d": {
+        const d = new Date(today);
+        d.setDate(d.getDate() - 29);
+        return { startDate: fmt(d), endDate: fmt(today) };
+      }
+      case "custom":
+        return {
+          startDate: filterStartDate || undefined,
+          endDate: filterEndDate || undefined,
+        };
+      default:
+        return {};
+    }
+  }
+
+  const filterDates = getFilterDates();
+  const filterQs = new URLSearchParams();
+  if (filterDates.startDate) filterQs.set("startDate", filterDates.startDate);
+  if (filterDates.endDate) filterQs.set("endDate", filterDates.endDate);
+  const filterSuffix = filterQs.toString() ? `?${filterQs.toString()}` : "";
+
   const pageSize = 50;
 
   const testQuery = useQuery({
@@ -310,8 +356,8 @@ export default function InContactPage() {
   });
 
   const { data: summary, isLoading: summaryLoading } = useQuery({
-    queryKey: ["staging-summary"],
-    queryFn: () => api.get<StagingSummary>("/bq/staging-summary"),
+    queryKey: ["staging-summary", filterDates.startDate, filterDates.endDate],
+    queryFn: () => api.get<StagingSummary>(`/bq/staging-summary${filterSuffix}`),
     retry: false,
   });
 
@@ -547,6 +593,55 @@ export default function InContactPage() {
 
       {tab === "pipeline" && (
         <div className="space-y-4">
+          <div className="flex flex-wrap items-center gap-2 border border-border rounded-lg p-3 bg-card">
+            <Filter className="w-4 h-4 text-muted-foreground shrink-0" />
+            <span className="text-sm font-medium text-muted-foreground shrink-0">Filter:</span>
+            {(["all", "today", "yesterday", "7d", "30d", "custom"] as const).map((preset) => {
+              const labels: Record<string, string> = { all: "All Time", today: "Today", yesterday: "Yesterday", "7d": "Last 7 Days", "30d": "Last 30 Days", custom: "Custom Range" };
+              return (
+                <button
+                  key={preset}
+                  onClick={() => setFilterPreset(preset)}
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                    filterPreset === preset
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted text-muted-foreground hover:bg-muted/80"
+                  }`}
+                >
+                  {labels[preset]}
+                </button>
+              );
+            })}
+            {filterPreset === "custom" && (
+              <>
+                <div className="flex items-center gap-1.5 ml-2">
+                  <Calendar className="w-3.5 h-3.5 text-muted-foreground" />
+                  <input
+                    type="date"
+                    value={filterStartDate}
+                    onChange={(e) => setFilterStartDate(e.target.value)}
+                    className="border border-input rounded-md px-2 py-1 text-xs bg-background"
+                  />
+                  <span className="text-xs text-muted-foreground">to</span>
+                  <input
+                    type="date"
+                    value={filterEndDate}
+                    onChange={(e) => setFilterEndDate(e.target.value)}
+                    className="border border-input rounded-md px-2 py-1 text-xs bg-background"
+                  />
+                </div>
+              </>
+            )}
+            {filterPreset !== "all" && (
+              <button
+                onClick={() => { setFilterPreset("all"); setFilterStartDate(""); setFilterEndDate(""); }}
+                className="ml-auto inline-flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+              >
+                <X className="w-3 h-3" /> Clear
+              </button>
+            )}
+          </div>
+
           {summaryLoading ? (
             <MetricsSkeleton />
           ) : (

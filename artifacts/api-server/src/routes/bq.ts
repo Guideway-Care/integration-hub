@@ -13,12 +13,26 @@ function getBqTables() {
   };
 }
 
-router.get("/bq/staging-summary", async (_req, res) => {
+router.get("/bq/staging-summary", async (req, res) => {
   try {
     const bq = getBigQueryClient();
     const { staging } = getBqTables();
+    const startDate = req.query.startDate as string | undefined;
+    const endDate = req.query.endDate as string | undefined;
+    let whereClause = "";
+    const params: Record<string, string> = {};
+    if (startDate) {
+      whereClause += " WHERE created_at >= TIMESTAMP(@startDate)";
+      params.startDate = startDate;
+    }
+    if (endDate) {
+      whereClause += whereClause ? " AND " : " WHERE ";
+      whereClause += "created_at < TIMESTAMP_ADD(TIMESTAMP(@endDate), INTERVAL 1 DAY)";
+      params.endDate = endDate;
+    }
     const [rows] = await bq.query({
-      query: `SELECT status, COUNT(*) as count FROM \`${staging}\` GROUP BY status ORDER BY status`,
+      query: `SELECT status, COUNT(*) as count FROM \`${staging}\`${whereClause} GROUP BY status ORDER BY status`,
+      params,
     });
     const summary: Record<string, number> = { pending: 0, processing: 0, downloaded: 0, failed: 0 };
     rows.forEach((r: any) => { summary[r.status] = Number(r.count); });
