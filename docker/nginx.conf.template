@@ -4,12 +4,18 @@ server {
     root /usr/share/nginx/html;
     index index.html;
 
+    resolver 8.8.8.8 8.8.4.4 valid=30s;
+
     location /api/ {
-        proxy_pass ${API_UPSTREAM}/api/;
-        proxy_set_header Host $host;
+        set $upstream ${API_UPSTREAM};
+        proxy_pass $upstream;
+        proxy_ssl_server_name on;
+        proxy_set_header Host ${API_HOST};
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 30s;
     }
 
     location / {
