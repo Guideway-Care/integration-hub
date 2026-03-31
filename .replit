@@ -24,3 +24,9 @@ expertMode = true
 [postMerge]
 path = "scripts/post-merge.sh"
 timeoutMs = 20000
+
+[userenv]
+
+[userenv.shared]
+GCP_PROJECT_ID = "guidewaycare-476802"
+GCP_REGION = "us-central1"
