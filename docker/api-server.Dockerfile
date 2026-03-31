@@ -6,8 +6,9 @@ FROM base AS deps
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
 COPY lib/db/package.json lib/db/
 COPY lib/api-zod/package.json lib/api-zod/
+COPY lib/api-spec/package.json lib/api-spec/
 COPY artifacts/api-server/package.json artifacts/api-server/
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --no-frozen-lockfile
 
 FROM base AS build
 COPY --from=deps /app/node_modules ./node_modules

@@ -6,9 +6,10 @@ FROM base AS deps
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
 COPY lib/db/package.json lib/db/
 COPY lib/api-zod/package.json lib/api-zod/
+COPY lib/api-spec/package.json lib/api-spec/
 COPY lib/api-client-react/package.json lib/api-client-react/
 COPY artifacts/control-plane/package.json artifacts/control-plane/
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --no-frozen-lockfile
 
 FROM base AS build
 COPY --from=deps /app/node_modules ./node_modules
