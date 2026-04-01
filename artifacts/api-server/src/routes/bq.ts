@@ -297,8 +297,8 @@ async function runTransformPipeline() {
     const dataset = bqRegional.dataset("raw");
     const table = dataset.table("calls_extracted");
     const [exportJob] = await table.extract(
-      gcs.bucket(gcsBucket).file(`${gcsPrefix}/calls_extracted_*.json`),
-      { format: "JSON", gzip: false }
+      gcs.bucket(gcsBucket).file(`${gcsPrefix}/calls_extracted_*.avro`),
+      { format: "AVRO", gzip: false }
     );
     console.log("[transform] Step 2 complete, export status:", exportJob.status?.state);
 
@@ -309,9 +309,9 @@ async function runTransformPipeline() {
     const [loadJob] = await stagingTable.load(
       gcs.bucket(gcsBucket).file(`${gcsPrefix}/calls_extracted_*`),
       {
-        sourceFormat: "NEWLINE_DELIMITED_JSON",
+        sourceFormat: "AVRO",
         writeDisposition: "WRITE_TRUNCATE",
-        autodetect: true,
+        useAvroLogicalTypes: true,
       }
     );
     console.log("[transform] Step 3 complete, load status:", loadJob.status?.state);
