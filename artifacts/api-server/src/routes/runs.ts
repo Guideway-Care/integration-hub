@@ -197,7 +197,9 @@ router.get("/runs/last-extraction", async (_req, res, next) => {
         errorSummary: extractionRunTable.errorSummary,
       })
       .from(extractionRunTable)
-      .where(eq(extractionRunTable.endpointId, "nice-cxone-contacts"))
+      .where(
+        sql`${extractionRunTable.endpointId} IN ('nice-cxone-contacts', 'incontact-completed-contacts')`
+      )
       .orderBy(desc(extractionRunTable.createdTs))
       .limit(1);
 
