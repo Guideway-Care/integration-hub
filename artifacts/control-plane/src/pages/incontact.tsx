@@ -767,9 +767,13 @@ export default function InContactPage() {
                   </div>
                   <div>
                     <span className="font-medium text-foreground">Window: </span>
-                    {lastExtraction.windowStartTs ? new Date(lastExtraction.windowStartTs).toLocaleDateString() : "—"}
+                    {lastExtraction.windowStartTs
+                      ? new Date(lastExtraction.windowStartTs).toLocaleDateString(undefined, { timeZone: "UTC" }) + " " + new Date(lastExtraction.windowStartTs).toLocaleTimeString(undefined, { timeZone: "UTC", hour: "2-digit", minute: "2-digit" })
+                      : "—"}
                     {" → "}
-                    {lastExtraction.windowEndTs ? new Date(lastExtraction.windowEndTs).toLocaleDateString() : "—"}
+                    {lastExtraction.windowEndTs
+                      ? new Date(lastExtraction.windowEndTs).toLocaleDateString(undefined, { timeZone: "UTC" }) + " " + new Date(lastExtraction.windowEndTs).toLocaleTimeString(undefined, { timeZone: "UTC", hour: "2-digit", minute: "2-digit" })
+                      : "—"}
                   </div>
                   <div>
                     <span className="font-medium text-foreground">Pages / Errors: </span>
