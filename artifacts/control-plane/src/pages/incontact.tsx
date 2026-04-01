@@ -452,6 +452,23 @@ export default function InContactPage() {
     },
   });
 
+  const { data: transformStatus } = useQuery({
+    queryKey: ["transform-status"],
+    queryFn: () => api.get<{ callsTableCount: number; rawPagesCount: number; lastIngested: string | null; latestContact: string | null }>("/bq/transform-status"),
+  });
+
+  const transformMutation = useMutation({
+    mutationFn: () => api.post<{ message: string; durationFormatted: string; rowsProcessed: string | null }>("/bq/transform-contacts"),
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["transform-status"] });
+      queryClient.invalidateQueries({ queryKey: ["contact-daily-counts"] });
+      toast({ title: "Transform completed", description: `${data.rowsProcessed ? Number(data.rowsProcessed).toLocaleString() + " rows" : "Completed"} in ${data.durationFormatted}` });
+    },
+    onError: (err) => {
+      toast({ title: "Transform failed", description: (err as Error).message, variant: "destructive" });
+    },
+  });
+
   const runLoaderMutation = useMutation({
     mutationFn: () => api.post("/bq/run-loader"),
     onSuccess: () => {
@@ -816,6 +833,49 @@ export default function InContactPage() {
 
           <PipelineStep
             number={2}
+            title="Transform Contacts"
+            description="Parse raw API payloads into the structured incontact.calls table"
+            status={transformMutation.isPending ? "running" : transformMutation.isSuccess ? "success" : transformMutation.isError ? "error" : "idle"}
+            onRun={() => transformMutation.mutate()}
+            isRunning={transformMutation.isPending}
+          >
+            <div className="flex items-center gap-4 text-sm">
+              <div className="text-center">
+                <div className="text-lg font-bold text-blue-600">{transformStatus?.rawPagesCount?.toLocaleString() ?? "—"}</div>
+                <div className="text-xs text-muted-foreground">Raw Pages</div>
+              </div>
+              <div className="text-center">
+                <div className="text-lg font-bold text-green-600">{transformStatus?.callsTableCount?.toLocaleString() ?? "—"}</div>
+                <div className="text-xs text-muted-foreground">Calls Table</div>
+              </div>
+              {transformStatus?.latestContact && (
+                <div className="text-center">
+                  <div className="text-sm font-medium">{new Date(transformStatus.latestContact).toLocaleDateString()}</div>
+                  <div className="text-xs text-muted-foreground">Latest Contact</div>
+                </div>
+              )}
+              <div className="flex-1" />
+            </div>
+            {transformMutation.isSuccess && (
+              <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-md text-xs text-green-700">
+                {(transformMutation.data as any)?.rowsProcessed
+                  ? `${Number((transformMutation.data as any).rowsProcessed).toLocaleString()} rows processed`
+                  : "Transform completed"} in {(transformMutation.data as any)?.durationFormatted}
+              </div>
+            )}
+            {transformMutation.isError && (
+              <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-md text-xs text-red-700">
+                {(transformMutation.error as Error).message}
+              </div>
+            )}
+          </PipelineStep>
+
+          <div className="flex justify-center">
+            <ArrowRight className="w-5 h-5 text-muted-foreground rotate-90" />
+          </div>
+
+          <PipelineStep
+            number={3}
             title="Queue Recordings"
             description="Load contact IDs into the staging queue for download processing"
             status={runLoaderMutation.isPending ? "running" : runLoaderMutation.isSuccess ? "success" : runLoaderMutation.isError ? "error" : "idle"}
@@ -833,7 +893,7 @@ export default function InContactPage() {
               </div>
               <div className="flex-1" />
               <div className="text-xs text-muted-foreground">
-                Scheduled: Runs after Step 1 completes
+                Scheduled: Runs after Step 2 completes
               </div>
             </div>
           </PipelineStep>
@@ -843,7 +903,7 @@ export default function InContactPage() {
           </div>
 
           <PipelineStep
-            number={3}
+            number={4}
             title="Download Recordings"
             description="Process the staging queue — download audio files to GCS and metadata to BigQuery"
             status={runProcessorMutation.isPending ? "running" : runProcessorMutation.isSuccess ? "success" : runProcessorMutation.isError ? "error" : "idle"}
@@ -875,7 +935,7 @@ export default function InContactPage() {
               )}
               <div className="flex-1" />
               <div className="text-xs text-muted-foreground">
-                Scheduled: Runs after Step 2 completes
+                Scheduled: Runs after Step 3 completes
               </div>
             </div>
           </PipelineStep>
