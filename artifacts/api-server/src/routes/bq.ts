@@ -472,28 +472,18 @@ router.post("/bq/queue-recordings", async (_req, res) => {
     const query = `
       SELECT CAST(c.contact_id AS STRING) AS contact_id
       FROM \`${projectId}.incontact.calls\` c
+      LEFT JOIN \`${projectId}.incontact.call_recordings\` r
+        ON CAST(c.contact_id AS STRING) = CAST(r.acd_contact_id AS STRING)
       WHERE c.campaign_name = 'United Regional Health'
         AND c.primary_disposition_name LIKE 'Reached Patient%'
+        AND r.acd_contact_id IS NULL
       ORDER BY c.contact_start_date DESC
     `;
 
-    console.log("[queue-recordings] Running query to find qualifying contacts...");
+    console.log("[queue-recordings] Running query to find missing recordings...");
     const [rows] = await bq.query({ query });
-    const allContactIds = rows.map((r: any) => r.contact_id).filter(Boolean);
-    console.log(`[queue-recordings] Found ${allContactIds.length} qualifying contacts`);
-
-    console.log("[queue-recordings] Listing existing recordings in GCS...");
-    const [files] = await gcs.bucket(bucket).getFiles({ prefix: "", delimiter: "/" });
-    const existingIds = new Set(
-      files
-        .map((f: any) => f.name)
-        .filter((name: string) => /^\d+\.mp4$/.test(name))
-        .map((name: string) => name.replace(".mp4", ""))
-    );
-    console.log(`[queue-recordings] Found ${existingIds.size} existing recordings in GCS`);
-
-    const contactIds = allContactIds.filter((id: string) => !existingIds.has(id));
-    console.log(`[queue-recordings] ${contactIds.length} contacts missing recordings (${allContactIds.length} total - ${existingIds.size} existing)`);
+    const contactIds = rows.map((r: any) => r.contact_id).filter(Boolean);
+    console.log(`[queue-recordings] Found ${contactIds.length} contacts missing recordings`);
 
     if (contactIds.length === 0) {
       res.json({ queued: 0, message: "No new recordings to queue" });
