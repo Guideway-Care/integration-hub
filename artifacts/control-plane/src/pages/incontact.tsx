@@ -457,19 +457,24 @@ export default function InContactPage() {
     queryFn: () => api.get<{ callsTableCount: number; rawPagesCount: number; lastIngested: string | null; latestContact: string | null }>("/bq/transform-status"),
   });
 
-  const { data: transformJobStatus } = useQuery({
+  type TransformJobStatus = {
+    status: "idle" | "running" | "completed" | "failed";
+    step: string;
+    startedAt?: string;
+    completedAt?: string;
+    durationMs?: number;
+    durationFormatted?: string;
+    rowsProcessed?: string | null;
+    error?: string;
+  };
+
+  const { data: transformJobStatus } = useQuery<TransformJobStatus>({
     queryKey: ["transform-job-status"],
-    queryFn: () => api.get<{
-      status: "idle" | "running" | "completed" | "failed";
-      step: string;
-      startedAt?: string;
-      completedAt?: string;
-      durationMs?: number;
-      durationFormatted?: string;
-      rowsProcessed?: string | null;
-      error?: string;
-    }>("/bq/transform-job-status"),
-    refetchInterval: transformJobStatus?.status === "running" ? 3000 : false,
+    queryFn: () => api.get<TransformJobStatus>("/bq/transform-job-status"),
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      return data?.status === "running" ? 3000 : false;
+    },
   });
 
   const transformMutation = useMutation({
@@ -488,7 +493,7 @@ export default function InContactPage() {
       queryClient.invalidateQueries({ queryKey: ["transform-status"] });
       queryClient.invalidateQueries({ queryKey: ["contact-daily-counts"] });
     }
-  }, [transformJobStatus?.status]);
+  }, [transformJobStatus?.status, queryClient]);
 
   const runLoaderMutation = useMutation({
     mutationFn: () => api.post("/bq/run-loader"),
