@@ -176,6 +176,76 @@ router.get("/runs", async (req, res, next) => {
   }
 });
 
+router.get("/runs/last-extraction", async (_req, res, next) => {
+  try {
+    const [lastRun] = await db
+      .select({
+        runId: extractionRunTable.runId,
+        endpointId: extractionRunTable.endpointId,
+        sourceSystemId: extractionRunTable.sourceSystemId,
+        status: extractionRunTable.status,
+        runType: extractionRunTable.runType,
+        windowStartTs: extractionRunTable.windowStartTs,
+        windowEndTs: extractionRunTable.windowEndTs,
+        pageCount: extractionRunTable.pageCount,
+        apiCallCount: extractionRunTable.apiCallCount,
+        errorCount: extractionRunTable.errorCount,
+        startedTs: extractionRunTable.startedTs,
+        endedTs: extractionRunTable.endedTs,
+        requestedBy: extractionRunTable.requestedBy,
+        cloudRunExecutionId: extractionRunTable.cloudRunExecutionId,
+        errorSummary: extractionRunTable.errorSummary,
+      })
+      .from(extractionRunTable)
+      .where(eq(extractionRunTable.endpointId, "nice-cxone-contacts"))
+      .orderBy(desc(extractionRunTable.createdTs))
+      .limit(1);
+
+    if (!lastRun) {
+      res.json({ data: null });
+      return;
+    }
+
+    let executionStatus: string | null = null;
+    let executionDuration: string | null = null;
+    if (lastRun.cloudRunExecutionId && process.env.NODE_ENV !== "development") {
+      try {
+        const token = await getAccessToken();
+        const execName = lastRun.cloudRunExecutionId.startsWith("projects/")
+          ? lastRun.cloudRunExecutionId
+          : `namespaces/${GCP_PROJECT_ID}/executions/${lastRun.cloudRunExecutionId}`;
+        const url = `https://${GCP_REGION}-run.googleapis.com/apis/run.googleapis.com/v1/${execName}`;
+        const resp = await fetch(url, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (resp.ok) {
+          const execData = await resp.json() as any;
+          const conditions = execData.status?.conditions ?? [];
+          const completed = conditions.find((c: any) => c.type === "Completed");
+          executionStatus = completed?.status === "True" ? "SUCCEEDED" : completed?.status === "False" ? "FAILED" : "RUNNING";
+          if (execData.status?.startTime && execData.status?.completionTime) {
+            const ms = new Date(execData.status.completionTime).getTime() - new Date(execData.status.startTime).getTime();
+            const secs = Math.round(ms / 1000);
+            executionDuration = secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`;
+          }
+        }
+      } catch (err) {
+        console.error("[last-extraction] Error fetching execution status:", err);
+      }
+    }
+
+    res.json({
+      data: {
+        ...lastRun,
+        executionStatus,
+        executionDuration,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get("/runs/:id", async (req, res, next) => {
   try {
     const [run] = await db

@@ -4,6 +4,7 @@ import { useState } from "react";
 import {
   Phone,
   CheckCircle,
+  CheckCircle2,
   XCircle,
   Loader2,
   Play,
@@ -393,6 +394,29 @@ export default function InContactPage() {
     enabled: tab === "api-explorer",
   });
 
+  interface LastExtraction {
+    runId: string;
+    status: string;
+    runType: string;
+    windowStartTs: string | null;
+    windowEndTs: string | null;
+    pageCount: number;
+    apiCallCount: number;
+    errorCount: number;
+    startedTs: string | null;
+    endedTs: string | null;
+    cloudRunExecutionId: string | null;
+    errorSummary: string | null;
+    executionStatus: string | null;
+    executionDuration: string | null;
+  }
+
+  const { data: lastExtractionData } = useQuery({
+    queryKey: ["last-extraction"],
+    queryFn: () => api.get<{ data: LastExtraction | null }>("/runs/last-extraction"),
+  });
+  const lastExtraction = lastExtractionData?.data ?? null;
+
   const authTestMutation = useMutation({
     mutationFn: () => api.post<any>("/incontact/auth-test"),
     onSuccess: (data: any) => {
@@ -718,10 +742,55 @@ export default function InContactPage() {
                   className="px-3 py-1.5 border border-input rounded-md text-sm bg-background"
                 />
               </div>
-              <div className="text-xs text-muted-foreground pt-4">
-                Scheduled: Daily at 2:00 AM CT for previous day
-              </div>
             </div>
+            {lastExtraction && (
+              <div className="mt-3 p-3 bg-muted/50 border border-border rounded-md text-xs space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="font-medium">Last Extraction</span>
+                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${
+                    lastExtraction.status === "COMPLETED" ? "bg-green-100 text-green-700" :
+                    lastExtraction.status === "FAILED" ? "bg-red-100 text-red-700" :
+                    lastExtraction.status === "RUNNING" ? "bg-blue-100 text-blue-700" :
+                    "bg-yellow-100 text-yellow-700"
+                  }`}>
+                    {lastExtraction.status === "COMPLETED" ? <CheckCircle2 className="w-3 h-3" /> :
+                     lastExtraction.status === "FAILED" ? <XCircle className="w-3 h-3" /> :
+                     lastExtraction.status === "RUNNING" ? <Loader2 className="w-3 h-3 animate-spin" /> :
+                     <Clock className="w-3 h-3" />}
+                    {lastExtraction.status}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-muted-foreground">
+                  <div>
+                    <span className="font-medium text-foreground">Run ID: </span>
+                    {lastExtraction.runId?.slice(0, 8)}...
+                  </div>
+                  <div>
+                    <span className="font-medium text-foreground">Window: </span>
+                    {lastExtraction.windowStartTs ? new Date(lastExtraction.windowStartTs).toLocaleDateString() : "—"}
+                    {" → "}
+                    {lastExtraction.windowEndTs ? new Date(lastExtraction.windowEndTs).toLocaleDateString() : "—"}
+                  </div>
+                  <div>
+                    <span className="font-medium text-foreground">Pages / Errors: </span>
+                    {lastExtraction.pageCount} / {lastExtraction.errorCount}
+                  </div>
+                  <div>
+                    <span className="font-medium text-foreground">Completed: </span>
+                    {lastExtraction.endedTs ? new Date(lastExtraction.endedTs).toLocaleString() : "—"}
+                  </div>
+                </div>
+                {lastExtraction.executionDuration && (
+                  <div className="text-muted-foreground">
+                    <span className="font-medium text-foreground">Cloud Run Duration: </span>
+                    {lastExtraction.executionDuration}
+                  </div>
+                )}
+                {lastExtraction.errorSummary && (
+                  <div className="text-red-600 mt-1">Error: {lastExtraction.errorSummary}</div>
+                )}
+              </div>
+            )}
             {fetchContactsMutation.isSuccess && (
               <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-md text-xs text-green-700">
                 Extraction run created. Run ID: {fetchContactsMutation.data?.data?.runId?.slice(0, 8)}...
