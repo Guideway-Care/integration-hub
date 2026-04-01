@@ -283,7 +283,13 @@ async function runTransformPipeline() {
           p.ingested_ts,
           ROW_NUMBER() OVER (PARTITION BY CAST(JSON_VALUE(contact, '$.contactId') AS INT64) ORDER BY p.ingested_ts DESC) AS rn
         FROM \`${projectId}.raw.api_payload\` p,
-        UNNEST(JSON_QUERY_ARRAY(p.response_body_json, '$.contacts')) AS contact
+        UNNEST(
+          CASE
+            WHEN JSON_QUERY_ARRAY(p.response_body_json, '$.contacts') IS NOT NULL
+              THEN JSON_QUERY_ARRAY(p.response_body_json, '$.contacts')
+            ELSE JSON_QUERY_ARRAY(p.response_body_json, '$.completedContacts')
+          END
+        ) AS contact
         WHERE (p.page_status = 'SUCCESS' OR p.http_status_code = 200)
       )
       SELECT * EXCEPT(rn) FROM extracted WHERE rn = 1
