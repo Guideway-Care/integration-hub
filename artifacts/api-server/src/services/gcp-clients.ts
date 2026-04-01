@@ -13,7 +13,7 @@ function getGcpCredentials(): { credentials?: any } {
 }
 
 export function getBigQueryClient() {
-  return new BigQuery({ projectId: GCP_PROJECT_ID, ...getGcpCredentials() });
+  return new BigQuery({ projectId: GCP_PROJECT_ID, location: "us-central1", ...getGcpCredentials() });
 }
 
 export function getGCSClient() {
