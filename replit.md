@@ -105,15 +105,28 @@ React + Vite frontend dashboard. "API Controller Hub" branding throughout.
   - Run Detail — Metrics cards + event log timeline
   - Run New — Form to trigger manual extraction runs (toast on success/error)
   - Monitor — BigQuery contact volume heatmap
-  - InContact — API explorer with auth test + endpoint fetch (toast notifications)
-  - Staging Queue — BigQuery staging queue management + job triggers (with CSV/JSON export, toasts, skeleton loading, pagination)
-  - Recordings — Processed call recordings table (with CSV/JSON export, search filter, pagination with 50/page, skeleton loading)
+  - InContact — Unified pipeline page with tabs: Pipeline (3-step flow with Run Now buttons, date filters, monthly calendar grid with DOW averages), Staging Queue (queue management + job triggers), Recordings (call recordings table), API Explorer (raw API testing)
   - Audit Log — Filterable audit trail of all platform changes with pagination (skeleton loading)
   - Scripts — Copiable BigQuery SQL setup scripts
 - **Shared components**: `table-skeleton.tsx` (TableSkeleton, CardSkeleton, MetricsSkeleton)
 - **Toast system**: shadcn/ui toast with `useToast` hook, Toaster mounted in App.tsx
 - **API Client**: `src/lib/api.ts` — fetch wrapper proxied to API server via Vite
 - Vite proxy: `/api` → `http://0.0.0.0:8080`
+
+### `lib/execution-engine` (`@workspace/execution-engine`)
+
+Extraction engine that runs as a Cloud Run Job. Ported from the original Pipeline-API-Ingestion-Controller repo.
+
+- **Entry**: `src/index.ts` — reads `RUN_ID` env var, connects to PostgreSQL, calls `executeRun()`
+- **Orchestrator**: `src/orchestrator.ts` — looks up run/endpoint/source-system/parameters from DB, authenticates, paginates, writes to BigQuery, tracks progress
+- **BigQuery Writer**: `src/bq-writer.ts` — writes raw API response pages to `raw.api_payload` table with SHA-256 hash, retry logic
+- **Paginator**: `src/paginator.ts` — supports NONE, PAGE_NUMBER, OFFSET_LIMIT, NEXT_TOKEN strategies
+- **Auth Manager**: `src/auth.ts` — resolves credentials from Secret Manager, handles OAuth2 token caching/refresh, API key, Basic, Bearer auth
+- **Rate Limiter**: `src/rate-limiter.ts` — rate limiting with exponential/linear/fixed backoff, 429 retry
+- **Event Logger**: `src/event-logger.ts` — writes structured events to `extraction_event` table
+- **Build**: esbuild → `dist/index.mjs`
+- **Docker**: `docker/extraction-job.Dockerfile` — Cloud Run Job container
+- Depends on: `@workspace/db`
 
 ### `lib/db` (`@workspace/db`)
 

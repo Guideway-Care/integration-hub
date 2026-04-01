@@ -399,20 +399,26 @@ export default function InContactPage() {
 
   const fetchContactsMutation = useMutation({
     mutationFn: () => {
-      return api.post<any>("/incontact/fetch", {
-        endpoint: "/incontactapi/services/v30.0/contacts/completed",
-        params: {
-          startDate: contactDateRange.startDate,
-          endDate: contactDateRange.endDate,
-        },
+      return api.post<any>("/runs", {
+        sourceSystemId: "incontact",
+        endpointId: "incontact-completed-contacts",
+        runType: "MANUAL",
+        requestedBy: "control-plane",
+        windowStartTs: new Date(contactDateRange.startDate + "T00:00:00Z").toISOString(),
+        windowEndTs: new Date(contactDateRange.endDate + "T23:59:59Z").toISOString(),
       });
     },
     onSuccess: (data: any) => {
-      const count = data?.data?.completedContacts?.length ?? data?.data?.length ?? "unknown";
-      toast({ title: "Contacts retrieved", description: `Found ${count} contacts for ${contactDateRange.startDate}` });
+      const runId = data?.data?.runId ?? "unknown";
+      const execId = data?.data?.cloudRunExecutionId;
+      toast({
+        title: "Extraction run created",
+        description: `Run ${runId.slice(0, 8)}... ${execId ? "triggered successfully" : "created (job trigger pending)"}`,
+      });
+      queryClient.invalidateQueries({ queryKey: ["runs"] });
     },
     onError: (err) => {
-      toast({ title: "Failed to retrieve contacts", description: (err as Error).message, variant: "destructive" });
+      toast({ title: "Failed to create extraction run", description: (err as Error).message, variant: "destructive" });
     },
   });
 
@@ -712,7 +718,10 @@ export default function InContactPage() {
             </div>
             {fetchContactsMutation.isSuccess && (
               <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-md text-xs text-green-700">
-                Contacts retrieved successfully. Response status: {fetchContactsMutation.data?.statusCode}
+                Extraction run created. Run ID: {fetchContactsMutation.data?.data?.runId?.slice(0, 8)}...
+                {fetchContactsMutation.data?.data?.cloudRunExecutionId && (
+                  <span> — Cloud Run Job triggered</span>
+                )}
               </div>
             )}
             {fetchContactsMutation.isError && (

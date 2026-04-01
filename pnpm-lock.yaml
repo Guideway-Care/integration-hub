@@ -156,10 +156,6 @@ overrides:
 importers:
 
   .:
-    dependencies:
-      '@replit/connectors-sdk':
-        specifier: ^0.3.0
-        version: 0.3.0
     devDependencies:
       prettier:
         specifier: ^3.8.1
@@ -653,6 +649,37 @@ importers:
         specifier: ^0.31.9
         version: 0.31.9
 
+  lib/execution-engine:
+    dependencies:
+      '@google-cloud/bigquery':
+        specifier: ^7.9.1
+        version: 7.9.4
+      '@google-cloud/secret-manager':
+        specifier: ^5.6.0
+        version: 5.6.0
+      '@workspace/db':
+        specifier: workspace:*
+        version: link:../db
+      drizzle-orm:
+        specifier: 'catalog:'
+        version: 0.45.1(@types/pg@8.18.0)(pg@8.20.0)
+      pg:
+        specifier: ^8.20.0
+        version: 8.20.0
+      zod:
+        specifier: 'catalog:'
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 25.3.5
+      '@types/pg':
+        specifier: ^8.18.0
+        version: 8.18.0
+      esbuild:
+        specifier: 0.27.3
+        version: 0.27.3
+
   scripts:
     devDependencies:
       '@types/node':
@@ -786,9 +813,17 @@ packages:
   '@gerrit0/mini-shiki@3.23.0':
     resolution: {integrity: sha512-bEMORlG0cqdjVyCEuU0cDQbORWX+kYCeo0kV1lbxF5bt4r7SID2l9bqsxJEM0zndaxpOUT7riCyIVEuqq/Ynxg==}
 
+  '@google-cloud/bigquery@7.9.4':
+    resolution: {integrity: sha512-C7jeI+9lnCDYK3cRDujcBsPgiwshWKn/f0BiaJmClplfyosCLfWE83iGQ0eKH113UZzjR9c9q7aZQg0nU388sw==}
+    engines: {node: '>=14.0.0'}
+
   '@google-cloud/bigquery@8.1.1':
     resolution: {integrity: sha512-2GHlohfA/VJffTvibMazMsZi6jPRx8MmaMberyDTL8rnhVs/frKSXVVRtLU83uSAy2j/5SD4mOs4jMQgJPON2g==}
     engines: {node: '>=18'}
+
+  '@google-cloud/common@5.0.2':
+    resolution: {integrity: sha512-V7bmBKYQyu0eVG2BFejuUjlBt+zrya6vtsKdY+JxMM/dNntPF41vZ9+LhOshEUH01zOHEqBSvI7Dad7ZS6aUeA==}
+    engines: {node: '>=14.0.0'}
 
   '@google-cloud/common@6.0.0':
     resolution: {integrity: sha512-IXh04DlkLMxWgYLIUYuHHKXKOUwPDzDgke1ykkkJPe48cGIS9kkL2U/o0pm4ankHLlvzLF/ma1eO86n/bkumIA==}
@@ -801,6 +836,10 @@ packages:
   '@google-cloud/paginator@6.0.0':
     resolution: {integrity: sha512-g5nmMnzC+94kBxOKkLGpK1ikvolTFCC3s2qtE4F+1EuArcJ7HHC23RDQVt3Ra3CqpUYZ+oXNKZ8n5Cn5yug8DA==}
     engines: {node: '>=18'}
+
+  '@google-cloud/precise-date@4.0.0':
+    resolution: {integrity: sha512-1TUx3KdaU3cN7nfCdNf+UVqA/PSX29Cjcox3fZZBtINlRrXVTmUkQnCKv2MbBUbCopbK4olAT1IHl76uZyCiVA==}
+    engines: {node: '>=14.0.0'}
 
   '@google-cloud/precise-date@5.0.0':
     resolution: {integrity: sha512-9h0Gvw92EvPdE8AK8AgZPbMnH5ftDyPtKm7/KUfcJVaPEPjwGDsJd1QV0H8esBDV4II41R/2lDWH1epBqIoKUw==}
@@ -822,6 +861,10 @@ packages:
     resolution: {integrity: sha512-N8qS6dlORGHwk7WjGXKOSsLjIjNINCPicsOX6gyyLiYk7mq3MtII96NZ9N2ahwA2vnkLmZODOIH9rlNniYWvCQ==}
     engines: {node: '>=18'}
 
+  '@google-cloud/secret-manager@5.6.0':
+    resolution: {integrity: sha512-0daW/OXQEVc6VQKPyJTQNyD+563I/TYQ7GCQJx4dq3lB666R9FUPvqHx9b/o/qQtZ5pfuoCbGZl3krpxgTSW8Q==}
+    engines: {node: '>=14.0.0'}
+
   '@google-cloud/secret-manager@6.1.1':
     resolution: {integrity: sha512-dwSuxJ9RNmAW46FjK1StiNIeOiSHHQs/XIy4VArJ6bBMR+WsIvR+zhPh2pa40aFa9uTty67j38Rl268TVV62EA==}
     engines: {node: '>=18'}
@@ -833,6 +876,11 @@ packages:
   '@grpc/grpc-js@1.14.3':
     resolution: {integrity: sha512-Iq8QQQ/7X3Sac15oB6p0FmUg/klxQvXLeileoqrTRGJYLV+/9tubbr9ipz0GKHjmXVsgFPo/+W+2cA8eNcR+XA==}
     engines: {node: '>=12.10.0'}
+
+  '@grpc/proto-loader@0.7.15':
+    resolution: {integrity: sha512-tMXdRCfYVixjuFK+Hk0Q1s38gV9zDiDJfWL3h1rv4Qc39oILCu1TRTDt7+fGUI8K4G1Fj125Hx/ru3azECWTyQ==}
+    engines: {node: '>=6'}
+    hasBin: true
 
   '@grpc/proto-loader@0.8.0':
     resolution: {integrity: sha512-rc1hOQtjIWGxcxpb9aHAfLpIctjEnsDehj0DAiVfBlmT84uvR0uUtN2hEi/ecvWVjXUGf5qPF4qEgiLOx1YIMQ==}
@@ -1610,9 +1658,6 @@ packages:
   '@radix-ui/rect@1.1.1':
     resolution: {integrity: sha512-HPwpGIzkl28mWyZqG52jiqDJ12waP11Pa1lGoiyUkIEuMLBP0oeK/C89esbXrxsky5we7dfd8U58nm0SgAWpVw==}
 
-  '@replit/connectors-sdk@0.3.0':
-    resolution: {integrity: sha512-JBHKPL69UsegdqXXxgUsz+mCps1YwbJELx7SxxsazR9+J3/TWPcuK/tNVO6mGP9Hd+AqeV2pF7BeODoOSyzfDg==}
-
   '@replit/vite-plugin-cartographer@0.5.1':
     resolution: {integrity: sha512-KiaQMx4ssTM8hSjMFscyIV1PN1bRVCWCFqN3fXOfXa39uFFCKUaeL3VvH/sxuy7S7ET+MCFOt+J7lLtL56bRrA==}
 
@@ -1799,6 +1844,9 @@ packages:
 
   '@types/http-errors@2.0.5':
     resolution: {integrity: sha512-r8Tayk8HJnX0FztbZN7oVqGccWgw98T/0neJphO91KkmOzug1KkofZURD4UaD5uH8AqcFLfdPErnBod0u71/qg==}
+
+  '@types/long@4.0.2':
+    resolution: {integrity: sha512-MqTGEo5bj5t157U6fA/BiDynNkn0YknVdh48CMPkTSpFTVmvao5UQmm7uEF6xBEo7qIMAlY/JSleYaE6VOdpaA==}
 
   '@types/node@25.3.5':
     resolution: {integrity: sha512-oX8xrhvpiyRCQkG1MFchB09f+cXftgIXb3a7UUa4Y3wpmZPw5tyZGTLWhlESOLq1Rq6oDlc8npVU2/9xiCuXMA==}
@@ -2550,6 +2598,10 @@ packages:
     resolution: {integrity: sha512-Jb6Z0+nvECVz+2lzSMt9u98UsoakXxA2HGHMCxh+so3n90XgYWkq5dur19JAJV7ONiJY22yBTyJB1TSkvPq9Ng==}
     engines: {node: '>=14'}
 
+  google-gax@4.6.1:
+    resolution: {integrity: sha512-V6eky/xz2mcKfAd1Ioxyd6nmA61gao3n01C+YeuIwu3vzM9EDR6wcVzMSIbLMDXWeoi9SHYctXuKYC5uJUT3eQ==}
+    engines: {node: '>=14'}
+
   google-gax@5.0.6:
     resolution: {integrity: sha512-1kGbqVQBZPAAu4+/R1XxPQKP0ydbNYoLAr4l0ZO2bMV0kLyLW4I1gAk++qBLWt7DPORTzmWRMsCZe86gDjShJA==}
     engines: {node: '>=18'}
@@ -2686,6 +2738,10 @@ packages:
   is-unicode-supported@2.1.0:
     resolution: {integrity: sha512-mE00Gnza5EEB3Ds0HfMyllZzbBrmLOX3vfWoj9A9PEnTfratQ/BcaJOuMhnkhjXvb2+FkY3VuHqtAGpTPmglFQ==}
     engines: {node: '>=18'}
+
+  is@3.3.2:
+    resolution: {integrity: sha512-a2xr4E3s1PjDS8ORcGgXpWx6V+liNs+O3JRD2mb9aeugD7rtkkZ0zgLdYgw0tWsKhsdiezGYptSiMlVazCBTuQ==}
+    engines: {node: '>= 0.4'}
 
   isexe@2.0.0:
     resolution: {integrity: sha512-RHxMLp9lnKHGHRng9QFhRCMbYAcVpn69smSGcq3f36xjgVVWThj4qqLbTLlq7Ssj8B+fIQ1EuCEGI2lKsyQeIw==}
@@ -3084,6 +3140,10 @@ packages:
 
   prop-types@15.8.1:
     resolution: {integrity: sha512-oj87CgZICdulUohogVAR7AjlC0327U4el4L6eAvOqCeudMDVU0NThNaV+b9Df4dXgSP1gXMTnPdhfe/2qDH5cg==}
+
+  proto3-json-serializer@2.0.2:
+    resolution: {integrity: sha512-SAzp/O4Yh02jGdRc+uIrGoe87dkN/XtwxfZ4ZyafJHymd79ozp5VG5nyZ7ygqPM5+cpLDjjGnYFUkngonyDPOQ==}
+    engines: {node: '>=14.0.0'}
 
   proto3-json-serializer@3.0.4:
     resolution: {integrity: sha512-E1sbAYg3aEbXrq0n1ojJkRHQJGE1kaE/O6GLA94y8rnJBfgvOPTOd1b9hOceQK1FFZI9qMh1vBERCyO2ifubcw==}
@@ -3847,6 +3907,23 @@ snapshots:
       '@shikijs/types': 3.23.0
       '@shikijs/vscode-textmate': 10.0.2
 
+  '@google-cloud/bigquery@7.9.4':
+    dependencies:
+      '@google-cloud/common': 5.0.2
+      '@google-cloud/paginator': 5.0.2
+      '@google-cloud/precise-date': 4.0.0
+      '@google-cloud/promisify': 4.0.0
+      arrify: 2.0.1
+      big.js: 6.2.2
+      duplexify: 4.1.3
+      extend: 3.0.2
+      is: 3.3.2
+      stream-events: 1.0.5
+      uuid: 9.0.1
+    transitivePeerDependencies:
+      - encoding
+      - supports-color
+
   '@google-cloud/bigquery@8.1.1':
     dependencies:
       '@google-cloud/common': 6.0.0
@@ -3860,6 +3937,21 @@ snapshots:
       stream-events: 1.0.5
       teeny-request: 10.1.2
     transitivePeerDependencies:
+      - supports-color
+
+  '@google-cloud/common@5.0.2':
+    dependencies:
+      '@google-cloud/projectify': 4.0.0
+      '@google-cloud/promisify': 4.1.0
+      arrify: 2.0.1
+      duplexify: 4.1.3
+      extend: 3.0.2
+      google-auth-library: 9.15.1
+      html-entities: 2.6.0
+      retry-request: 7.0.2
+      teeny-request: 9.0.0
+    transitivePeerDependencies:
+      - encoding
       - supports-color
 
   '@google-cloud/common@6.0.0':
@@ -3885,6 +3977,8 @@ snapshots:
     dependencies:
       extend: 3.0.2
 
+  '@google-cloud/precise-date@4.0.0': {}
+
   '@google-cloud/precise-date@5.0.0': {}
 
   '@google-cloud/projectify@4.0.0': {}
@@ -3894,6 +3988,13 @@ snapshots:
   '@google-cloud/promisify@4.1.0': {}
 
   '@google-cloud/promisify@5.0.0': {}
+
+  '@google-cloud/secret-manager@5.6.0':
+    dependencies:
+      google-gax: 4.6.1
+    transitivePeerDependencies:
+      - encoding
+      - supports-color
 
   '@google-cloud/secret-manager@6.1.1':
     dependencies:
@@ -3926,6 +4027,13 @@ snapshots:
     dependencies:
       '@grpc/proto-loader': 0.8.0
       '@js-sdsl/ordered-map': 4.4.2
+
+  '@grpc/proto-loader@0.7.15':
+    dependencies:
+      lodash.camelcase: 4.3.0
+      long: 5.3.2
+      protobufjs: 7.5.4
+      yargs: 17.7.2
 
   '@grpc/proto-loader@0.8.0':
     dependencies:
@@ -4811,8 +4919,6 @@ snapshots:
 
   '@radix-ui/rect@1.1.1': {}
 
-  '@replit/connectors-sdk@0.3.0': {}
-
   '@replit/vite-plugin-cartographer@0.5.1':
     dependencies:
       '@babel/parser': 7.29.0
@@ -5019,6 +5125,8 @@ snapshots:
       '@types/unist': 3.0.3
 
   '@types/http-errors@2.0.5': {}
+
+  '@types/long@4.0.2': {}
 
   '@types/node@25.3.5':
     dependencies:
@@ -5734,6 +5842,24 @@ snapshots:
       - encoding
       - supports-color
 
+  google-gax@4.6.1:
+    dependencies:
+      '@grpc/grpc-js': 1.14.3
+      '@grpc/proto-loader': 0.7.15
+      '@types/long': 4.0.2
+      abort-controller: 3.0.0
+      duplexify: 4.1.3
+      google-auth-library: 9.15.1
+      node-fetch: 2.7.0
+      object-hash: 3.0.0
+      proto3-json-serializer: 2.0.2
+      protobufjs: 7.5.4
+      retry-request: 7.0.2
+      uuid: 9.0.1
+    transitivePeerDependencies:
+      - encoding
+      - supports-color
+
   google-gax@5.0.6:
     dependencies:
       '@grpc/grpc-js': 1.14.3
@@ -5874,6 +6000,8 @@ snapshots:
   is-stream@4.0.1: {}
 
   is-unicode-supported@2.1.0: {}
+
+  is@3.3.2: {}
 
   isexe@2.0.0: {}
 
@@ -6262,6 +6390,10 @@ snapshots:
       loose-envify: 1.4.0
       object-assign: 4.1.1
       react-is: 16.13.1
+
+  proto3-json-serializer@2.0.2:
+    dependencies:
+      protobufjs: 7.5.4
 
   proto3-json-serializer@3.0.4:
     dependencies:
