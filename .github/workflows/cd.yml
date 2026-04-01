@@ -131,6 +131,7 @@ jobs:
             gcloud run jobs update extraction-job \
               --image=${{ env.ARTIFACT_REGISTRY }}/extraction-job:${{ github.sha }} \
               --region=${{ env.GCP_REGION }} \
+              --service-account=api-controller-hub-dev@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com \
               --set-cloudsql-instances=${{ vars.CLOUD_SQL_CONNECTION }} \
               --set-env-vars=DATABASE_URL=${{ secrets.DATABASE_URL }},NODE_ENV=production,GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }} \
               --memory=1Gi \
@@ -141,6 +142,7 @@ jobs:
             gcloud run jobs create extraction-job \
               --image=${{ env.ARTIFACT_REGISTRY }}/extraction-job:${{ github.sha }} \
               --region=${{ env.GCP_REGION }} \
+              --service-account=api-controller-hub-dev@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com \
               --set-cloudsql-instances=${{ vars.CLOUD_SQL_CONNECTION }} \
               --set-env-vars=DATABASE_URL=${{ secrets.DATABASE_URL }},NODE_ENV=production,GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }} \
               --memory=1Gi \
