@@ -400,8 +400,8 @@ export default function InContactPage() {
   const fetchContactsMutation = useMutation({
     mutationFn: () => {
       return api.post<any>("/runs", {
-        sourceSystemId: "incontact",
-        endpointId: "incontact-completed-contacts",
+        sourceSystemId: "nice-cxone",
+        endpointId: "nice-cxone-contacts",
         runType: "MANUAL",
         requestedBy: "control-plane",
         windowStartTs: new Date(contactDateRange.startDate + "T00:00:00Z").toISOString(),
