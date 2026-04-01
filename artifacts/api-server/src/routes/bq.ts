@@ -293,11 +293,21 @@ async function runTransformPipeline() {
     console.log("[transform] Step 1 complete");
 
     transformJob.step = "Step 2/4: Exporting to cloud storage...";
-    console.log("[transform] Step 2: Export raw.calls_extracted → GCS");
+    console.log("[transform] Step 2: Cleaning old staging files then exporting");
+    try {
+      const [oldFiles] = await gcs.bucket(gcsBucket).getFiles({ prefix: `${gcsPrefix}/` });
+      if (oldFiles.length > 0) {
+        await Promise.all(oldFiles.map((f: any) => f.delete()));
+        console.log(`[transform] Cleaned ${oldFiles.length} old staging files`);
+      }
+    } catch (cleanErr: any) {
+      console.warn("[transform] Pre-cleanup warning:", cleanErr.message);
+    }
+
     const dataset = bqRegional.dataset("raw");
     const table = dataset.table("calls_extracted");
     const [exportJob] = await table.extract(
-      gcs.bucket(gcsBucket).file(`${gcsPrefix}/calls_extracted_*.avro`),
+      gcs.bucket(gcsBucket).file(`${gcsPrefix}/data_*.avro`),
       { format: "AVRO", gzip: false }
     );
     console.log("[transform] Step 2 complete, export status:", exportJob.status?.state);
@@ -307,7 +317,7 @@ async function runTransformPipeline() {
     const incontactDataset = bqUS.dataset("incontact");
     const stagingTable = incontactDataset.table("calls_staging");
     const [loadJob] = await stagingTable.load(
-      gcs.bucket(gcsBucket).file(`${gcsPrefix}/calls_extracted_*`),
+      gcs.bucket(gcsBucket).file(`${gcsPrefix}/data_*.avro`),
       {
         sourceFormat: "AVRO",
         writeDisposition: "WRITE_TRUNCATE",
@@ -341,7 +351,7 @@ async function runTransformPipeline() {
 
     console.log("[transform] Cleanup: removing GCS staging files");
     try {
-      const [files] = await gcs.bucket(gcsBucket).getFiles({ prefix: `${gcsPrefix}/calls_extracted_` });
+      const [files] = await gcs.bucket(gcsBucket).getFiles({ prefix: `${gcsPrefix}/` });
       await Promise.all(files.map((f: any) => f.delete()));
     } catch (cleanupErr: any) {
       console.warn("[transform] Cleanup warning:", cleanupErr.message);
