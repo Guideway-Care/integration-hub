@@ -10,17 +10,17 @@ router.get("/monitor/contact-daily-counts", async (req, res, next) => {
     const projectId = getGcpProjectId();
     const bq = getBigQueryClient("US");
 
-    let dateFilter = "AND DATE(TIMESTAMP_MICROS(contact_start_date)) >= @startDate";
+    let dateFilter = "AND DATE(contact_start_date) >= @startDate";
     const params: Record<string, string> = { startDate };
     if (endDate) {
-      dateFilter += " AND DATE(TIMESTAMP_MICROS(contact_start_date)) <= @endDate";
+      dateFilter += " AND DATE(contact_start_date) <= @endDate";
       params.endDate = endDate;
     }
 
     const query = `
       SELECT
-        DATE(TIMESTAMP_MICROS(contact_start_date)) AS contact_date,
-        EXTRACT(DAYOFWEEK FROM DATE(TIMESTAMP_MICROS(contact_start_date))) AS dow,
+        DATE(contact_start_date) AS contact_date,
+        EXTRACT(DAYOFWEEK FROM DATE(contact_start_date)) AS dow,
         COUNT(*) AS contact_count
       FROM \`${projectId}.incontact.calls\`
       WHERE contact_start_date IS NOT NULL
