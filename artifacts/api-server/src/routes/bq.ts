@@ -15,7 +15,7 @@ function getBqTables() {
 
 router.get("/bq/staging-summary", async (req, res) => {
   try {
-    const bq = getBigQueryClient();
+    const bq = getBigQueryClient("US");
     const { staging } = getBqTables();
     const startDate = req.query.startDate as string | undefined;
     const endDate = req.query.endDate as string | undefined;
@@ -46,7 +46,7 @@ router.get("/bq/staging-summary", async (req, res) => {
 
 router.get("/bq/staging-queue", async (_req, res) => {
   try {
-    const bq = getBigQueryClient();
+    const bq = getBigQueryClient("US");
     const { staging } = getBqTables();
     const [rows] = await bq.query({
       query: `SELECT id, call_id, status, error_message, batch_id, 
@@ -63,7 +63,7 @@ router.get("/bq/staging-queue", async (_req, res) => {
 
 router.get("/bq/recordings", async (_req, res) => {
   try {
-    const bq = getBigQueryClient();
+    const bq = getBigQueryClient("US");
     const { recordings } = getBqTables();
     const [rows] = await bq.query({
       query: `SELECT id, contact_id, acd_contact_id, agent_id, agent_name, 
@@ -92,7 +92,7 @@ router.post("/bq/staging-add", async (req, res) => {
       return;
     }
 
-    const bq = getBigQueryClient();
+    const bq = getBigQueryClient("US");
     const { staging } = getBqTables();
     const batchId = parsed.data.batchId || `batch-${Date.now()}`;
     const callIdRegex = /^\d{6,20}$/;
@@ -118,7 +118,7 @@ router.post("/bq/staging-add", async (req, res) => {
 
 router.post("/bq/staging-reset-failed", async (_req, res) => {
   try {
-    const bq = getBigQueryClient();
+    const bq = getBigQueryClient("US");
     const { staging } = getBqTables();
     await bq.query({
       query: `UPDATE \`${staging}\` SET status = 'pending', error_message = NULL, processed_at = NULL WHERE status = 'failed'`,
@@ -132,7 +132,7 @@ router.post("/bq/staging-reset-failed", async (_req, res) => {
 
 router.post("/bq/staging-clear", async (_req, res) => {
   try {
-    const bq = getBigQueryClient();
+    const bq = getBigQueryClient("US");
     const { staging, recordings } = getBqTables();
     await bq.query({ query: `DELETE FROM \`${staging}\` WHERE true` });
     await bq.query({ query: `DELETE FROM \`${recordings}\` WHERE true` });
@@ -188,7 +188,7 @@ async function triggerInContactCloudRunJob(jobName: string) {
 
 router.post("/bq/transform-contacts", async (_req, res) => {
   try {
-    const bq = getBigQueryClient();
+    const bq = getBigQueryClient("US");
     const projectId = getGcpProjectId();
 
     const transformQuery = `
@@ -305,25 +305,26 @@ router.post("/bq/transform-contacts", async (_req, res) => {
 
 router.get("/bq/transform-status", async (_req, res) => {
   try {
-    const bq = getBigQueryClient();
     const projectId = getGcpProjectId();
+    const bqUS = getBigQueryClient("US");
+    const bqRegional = getBigQueryClient("us-central1");
 
-    const [callsRows] = await bq.query({
+    const [callsRows] = await bqUS.query({
       query: `SELECT COUNT(*) as count FROM \`${projectId}.incontact.calls\``,
     });
     const callsCount = Number(callsRows[0]?.count || 0);
 
-    const [rawRows] = await bq.query({
+    const [rawRows] = await bqRegional.query({
       query: `SELECT COUNT(*) as count FROM \`${projectId}.raw.api_payload\` WHERE page_status = 'SUCCESS'`,
     });
     const rawPagesCount = Number(rawRows[0]?.count || 0);
 
-    const [latestRow] = await bq.query({
+    const [latestRow] = await bqRegional.query({
       query: `SELECT MAX(ingested_ts) as last_ingested FROM \`${projectId}.raw.api_payload\` WHERE page_status = 'SUCCESS'`,
     });
     const lastIngested = latestRow[0]?.last_ingested?.value || null;
 
-    const [latestCallRow] = await bq.query({
+    const [latestCallRow] = await bqUS.query({
       query: `SELECT MAX(contact_start_date) as latest_contact FROM \`${projectId}.incontact.calls\``,
     });
     const latestContact = latestCallRow[0]?.latest_contact?.value || null;

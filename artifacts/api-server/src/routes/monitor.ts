@@ -8,7 +8,7 @@ router.get("/monitor/contact-daily-counts", async (req, res, next) => {
     const startDate = (req.query.startDate as string) || "2026-01-01";
     const endDate = req.query.endDate as string | undefined;
     const projectId = getGcpProjectId();
-    const bq = getBigQueryClient();
+    const bq = getBigQueryClient("US");
 
     let dateFilter = "AND DATE(TIMESTAMP_MICROS(contact_start_date)) >= @startDate";
     const params: Record<string, string> = { startDate };
