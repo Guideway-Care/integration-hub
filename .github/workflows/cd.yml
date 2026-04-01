@@ -136,7 +136,7 @@ jobs:
               --memory=1Gi \
               --cpu=1 \
               --max-retries=1 \
-              --task-timeout=3600s
+              --task-timeout=7200s
           else
             gcloud run jobs create extraction-job \
               --image=${{ env.ARTIFACT_REGISTRY }}/extraction-job:${{ github.sha }} \
@@ -146,7 +146,7 @@ jobs:
               --memory=1Gi \
               --cpu=1 \
               --max-retries=1 \
-              --task-timeout=3600s
+              --task-timeout=7200s
           fi
 
   deploy-incontact-jobs:
