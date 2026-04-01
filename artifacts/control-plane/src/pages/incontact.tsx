@@ -377,6 +377,12 @@ export default function InContactPage() {
     enabled: tab === "recordings",
   });
 
+  const { data: callListStatus } = useQuery({
+    queryKey: ["call-list-status"],
+    queryFn: () => api.get<{ exists: boolean; lineCount: number }>("/bq/call-list-status"),
+    retry: false,
+  });
+
   const monitorQs = new URLSearchParams();
   if (filterDates.startDate) monitorQs.set("startDate", filterDates.startDate);
   if (filterDates.endDate) monitorQs.set("endDate", filterDates.endDate);
@@ -496,12 +502,13 @@ export default function InContactPage() {
   }, [transformJobStatus?.status, queryClient]);
 
   const runLoaderMutation = useMutation({
-    mutationFn: () => api.post("/bq/run-loader"),
-    onSuccess: () => {
-      toast({ title: "Loader job started", description: "Call IDs are being loaded into the staging queue." });
+    mutationFn: () => api.post<{ queued: number; message?: string }>("/bq/queue-recordings"),
+    onSuccess: (data) => {
+      toast({ title: "Queue recordings complete", description: data.message || `${data.queued} contact IDs written to call list` });
+      queryClient.invalidateQueries({ queryKey: ["call-list-status"] });
     },
     onError: (err) => {
-      toast({ title: "Loader job failed", description: (err as Error).message, variant: "destructive" });
+      toast({ title: "Queue recordings failed", description: (err as Error).message, variant: "destructive" });
     },
   });
 
@@ -909,23 +916,21 @@ export default function InContactPage() {
           <PipelineStep
             number={3}
             title="Queue Recordings"
-            description="Load contact IDs into the staging queue for download processing"
+            description="Find United Regional Health calls with 'Reached Patient' disposition missing from call_recordings and write to call_list.txt"
             status={runLoaderMutation.isPending ? "running" : runLoaderMutation.isSuccess ? "success" : runLoaderMutation.isError ? "error" : "idle"}
             onRun={() => runLoaderMutation.mutate()}
             isRunning={runLoaderMutation.isPending}
           >
             <div className="flex items-center gap-4 text-sm">
               <div className="text-center">
-                <div className="text-lg font-bold text-yellow-600">{summary?.pending ?? 0}</div>
-                <div className="text-xs text-muted-foreground">Pending</div>
+                <div className="text-lg font-bold text-blue-600">{callListStatus?.lineCount?.toLocaleString() ?? 0}</div>
+                <div className="text-xs text-muted-foreground">Contact IDs in Call List</div>
               </div>
               <div className="text-center">
-                <div className="text-lg font-bold">{summary?.total?.toLocaleString() ?? 0}</div>
-                <div className="text-xs text-muted-foreground">Total Queued</div>
-              </div>
-              <div className="flex-1" />
-              <div className="text-xs text-muted-foreground">
-                Scheduled: Runs after Step 2 completes
+                <div className={`text-lg font-bold ${callListStatus?.exists ? 'text-green-600' : 'text-muted-foreground'}`}>
+                  {callListStatus?.exists ? '✓' : '—'}
+                </div>
+                <div className="text-xs text-muted-foreground">call_list.txt</div>
               </div>
             </div>
           </PipelineStep>

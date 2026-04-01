@@ -462,12 +462,42 @@ router.post("/bq/run-job", async (_req, res) => {
   }
 });
 
-router.post("/bq/run-loader", async (_req, res) => {
+router.post("/bq/queue-recordings", async (_req, res) => {
   try {
-    const result = await triggerInContactCloudRunJob("incontact-call-loader");
-    res.json(result);
+    const projectId = getGcpProjectId();
+    const bq = getBigQueryClient("US");
+    const { bucket } = getBqTables();
+    const gcs = getGCSClient();
+
+    const query = `
+      SELECT CAST(c.contact_id AS STRING) AS contact_id
+      FROM \`${projectId}.incontact.calls\` c
+      LEFT JOIN \`${projectId}.incontact.call_recordings\` r
+        ON c.contact_id = r.contact_id
+      WHERE c.campaign_name = 'United Regional Health'
+        AND c.primary_disposition_name LIKE 'Reached Patient%'
+        AND r.contact_id IS NULL
+      ORDER BY c.contact_start_date DESC
+    `;
+
+    console.log("[queue-recordings] Running query to find missing recordings...");
+    const [rows] = await bq.query({ query });
+    const contactIds = rows.map((r: any) => r.contact_id).filter(Boolean);
+    console.log(`[queue-recordings] Found ${contactIds.length} contacts missing recordings`);
+
+    if (contactIds.length === 0) {
+      res.json({ queued: 0, message: "No new recordings to queue" });
+      return;
+    }
+
+    const fileContent = contactIds.join("\n") + "\n";
+    const file = gcs.bucket(bucket).file("call_list/call_list.txt");
+    await file.save(fileContent, { contentType: "text/plain" });
+    console.log(`[queue-recordings] Wrote ${contactIds.length} contact IDs to gs://${bucket}/call_list/call_list.txt`);
+
+    res.json({ queued: contactIds.length });
   } catch (err: any) {
-    console.error("[bq/run-loader]", err.message);
+    console.error("[bq/queue-recordings]", err.message);
     res.status(500).json({ error: err.message });
   }
 });
