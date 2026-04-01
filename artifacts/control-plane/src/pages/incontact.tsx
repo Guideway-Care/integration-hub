@@ -160,9 +160,10 @@ function ContactCalendar({ rows }: { rows: DailyCount[] }) {
   const dowTotals = [0, 0, 0, 0, 0, 0, 0];
   const dowCounts = [0, 0, 0, 0, 0, 0, 0];
   for (const row of rows) {
-    const d = row.dow ?? new Date(typeof row.contact_date === "string" ? row.contact_date : row.contact_date?.value ?? "").getDay();
-    dowTotals[d] += row.contact_count;
-    dowCounts[d] += 1;
+    const bqDow = row.dow ?? new Date(typeof row.contact_date === "string" ? row.contact_date : row.contact_date?.value ?? "").getDay() + 1;
+    const jsDay = bqDow === 1 ? 0 : bqDow - 1;
+    dowTotals[jsDay] += row.contact_count;
+    dowCounts[jsDay] += 1;
   }
   const dowAvg = dowTotals.map((t, i) => (dowCounts[i] > 0 ? Math.round(t / dowCounts[i]) : 0));
 
@@ -375,9 +376,14 @@ export default function InContactPage() {
     enabled: tab === "recordings",
   });
 
+  const monitorQs = new URLSearchParams();
+  if (filterDates.startDate) monitorQs.set("startDate", filterDates.startDate);
+  if (filterDates.endDate) monitorQs.set("endDate", filterDates.endDate);
+  const monitorSuffix = monitorQs.toString() ? `?${monitorQs.toString()}` : "?startDate=2026-01-01";
+
   const { data: monitorData, isLoading: monitorLoading } = useQuery({
-    queryKey: ["monitor-daily"],
-    queryFn: () => api.get<{ data: DailyCount[] }>("/monitor/contact-daily-counts?startDate=2026-01-01"),
+    queryKey: ["monitor-daily", filterDates.startDate, filterDates.endDate],
+    queryFn: () => api.get<{ data: DailyCount[] }>(`/monitor/contact-daily-counts${monitorSuffix}`),
     retry: false,
   });
 
