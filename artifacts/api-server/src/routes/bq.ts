@@ -188,11 +188,16 @@ async function triggerInContactCloudRunJob(jobName: string) {
 
 router.post("/bq/transform-contacts", async (_req, res) => {
   try {
-    const bq = getBigQueryClient("US");
+    const bqRegional = getBigQueryClient("us-central1");
+    const bqUS = getBigQueryClient("US");
+    const gcs = getGCSClient();
     const projectId = getGcpProjectId();
+    const gcsBucket = "incontact-audio";
+    const gcsPrefix = "transform-staging";
+    const startTime = Date.now();
 
-    const transformQuery = `
-      CREATE OR REPLACE TABLE \`${projectId}.incontact.calls\` AS
+    const step1Query = `
+      CREATE OR REPLACE TABLE \`${projectId}.raw.calls_extracted\` AS
       WITH extracted AS (
         SELECT
           CAST(JSON_VALUE(contact, '$.contactId') AS INT64) AS contact_id,
@@ -268,29 +273,68 @@ router.post("/bq/transform-contacts", async (_req, res) => {
         UNNEST(JSON_QUERY_ARRAY(p.response_body_json, '$.contacts')) AS contact
         WHERE p.page_status = 'SUCCESS'
       )
+      SELECT * EXCEPT(rn) FROM extracted WHERE rn = 1
+    `;
+    console.log("[transform] Step 1: Extract from raw.api_payload → raw.calls_extracted (us-central1)");
+    const [job1] = await bqRegional.createQueryJob({ query: step1Query });
+    await job1.getQueryResults();
+    console.log("[transform] Step 1 complete");
+
+    console.log("[transform] Step 2: Export raw.calls_extracted → GCS");
+    const dataset = bqRegional.dataset("raw");
+    const table = dataset.table("calls_extracted");
+    const gcsUri = `gs://${gcsBucket}/${gcsPrefix}/calls_extracted_*.json`;
+    const [exportJob] = await table.extract(
+      gcs.bucket(gcsBucket).file(`${gcsPrefix}/calls_extracted_*.json`),
+      { format: "JSON", gzip: false }
+    );
+    console.log("[transform] Step 2 complete, export status:", exportJob.status?.state);
+
+    console.log("[transform] Step 3: Load GCS → incontact.calls_staging (US)");
+    const incontactDataset = bqUS.dataset("incontact");
+    const stagingTable = incontactDataset.table("calls_staging");
+    const [loadJob] = await stagingTable.load(
+      gcs.bucket(gcsBucket).file(`${gcsPrefix}/calls_extracted_*`),
+      {
+        sourceFormat: "NEWLINE_DELIMITED_JSON",
+        writeDisposition: "WRITE_TRUNCATE",
+        autodetect: true,
+      }
+    );
+    console.log("[transform] Step 3 complete, load status:", loadJob.status?.state);
+
+    console.log("[transform] Step 4: JOIN with dispositions → incontact.calls (US)");
+    const step4Query = `
+      CREATE OR REPLACE TABLE \`${projectId}.incontact.calls\` AS
       SELECT
-        e.* EXCEPT(rn),
+        s.*,
         pd.disposition_name AS primary_disposition_name,
         sd.disposition_name AS secondary_disposition_name
-      FROM extracted e
+      FROM \`${projectId}.incontact.calls_staging\` s
       LEFT JOIN \`${projectId}.incontact.dispositions\` pd
-        ON e.primary_disposition_id = pd.disposition_id
+        ON s.primary_disposition_id = pd.disposition_id
       LEFT JOIN \`${projectId}.incontact.dispositions\` sd
-        ON e.secondary_disposition_id = sd.disposition_id
-      WHERE e.rn = 1
+        ON s.secondary_disposition_id = sd.disposition_id
     `;
-
-    const startTime = Date.now();
-    const [job] = await bq.createQueryJob({ query: transformQuery });
-    const [rows] = await job.getQueryResults();
+    const [job4] = await bqUS.createQueryJob({ query: step4Query });
+    await job4.getQueryResults();
     const durationMs = Date.now() - startTime;
+    console.log("[transform] Step 4 complete");
 
-    const metadata = await job.getMetadata();
-    const stats = metadata[0]?.statistics;
+    const meta4 = await job4.getMetadata();
+    const stats = meta4[0]?.statistics;
     const totalRows = stats?.query?.numDmlAffectedRows || stats?.numRowsAffected || null;
 
+    console.log("[transform] Cleanup: removing GCS staging files");
+    try {
+      const [files] = await gcs.bucket(gcsBucket).getFiles({ prefix: `${gcsPrefix}/calls_extracted_` });
+      await Promise.all(files.map((f: any) => f.delete()));
+    } catch (cleanupErr: any) {
+      console.warn("[transform] Cleanup warning:", cleanupErr.message);
+    }
+
     res.json({
-      message: "Transform completed",
+      message: "Transform completed (cross-region: raw→GCS→incontact)",
       durationMs,
       durationFormatted: durationMs >= 60000
         ? `${Math.floor(durationMs / 60000)}m ${Math.round((durationMs % 60000) / 1000)}s`
