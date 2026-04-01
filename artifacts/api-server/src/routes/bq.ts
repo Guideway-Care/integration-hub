@@ -186,16 +186,29 @@ async function triggerInContactCloudRunJob(jobName: string) {
   return { message: "Job started", executionName: (data as any).metadata?.name || (data as any).name };
 }
 
-router.post("/bq/transform-contacts", async (_req, res) => {
-  try {
-    const bqRegional = getBigQueryClient("us-central1");
-    const bqUS = getBigQueryClient("US");
-    const gcs = getGCSClient();
-    const projectId = getGcpProjectId();
-    const gcsBucket = "incontact-audio";
-    const gcsPrefix = "transform-staging";
-    const startTime = Date.now();
+let transformJob: {
+  status: "idle" | "running" | "completed" | "failed";
+  step: string;
+  startedAt?: string;
+  completedAt?: string;
+  durationMs?: number;
+  durationFormatted?: string;
+  rowsProcessed?: string | null;
+  error?: string;
+} = { status: "idle", step: "" };
 
+async function runTransformPipeline() {
+  const bqRegional = getBigQueryClient("us-central1");
+  const bqUS = getBigQueryClient("US");
+  const gcs = getGCSClient();
+  const projectId = getGcpProjectId();
+  const gcsBucket = "incontact-audio";
+  const gcsPrefix = "transform-staging";
+  const startTime = Date.now();
+
+  try {
+    transformJob.step = "Step 1/4: Extracting contacts from raw data...";
+    console.log("[transform] Step 1: Extract from raw.api_payload → raw.calls_extracted (us-central1)");
     const step1Query = `
       CREATE OR REPLACE TABLE \`${projectId}.raw.calls_extracted\` AS
       WITH extracted AS (
@@ -275,21 +288,21 @@ router.post("/bq/transform-contacts", async (_req, res) => {
       )
       SELECT * EXCEPT(rn) FROM extracted WHERE rn = 1
     `;
-    console.log("[transform] Step 1: Extract from raw.api_payload → raw.calls_extracted (us-central1)");
     const [job1] = await bqRegional.createQueryJob({ query: step1Query });
     await job1.getQueryResults();
     console.log("[transform] Step 1 complete");
 
+    transformJob.step = "Step 2/4: Exporting to cloud storage...";
     console.log("[transform] Step 2: Export raw.calls_extracted → GCS");
     const dataset = bqRegional.dataset("raw");
     const table = dataset.table("calls_extracted");
-    const gcsUri = `gs://${gcsBucket}/${gcsPrefix}/calls_extracted_*.json`;
     const [exportJob] = await table.extract(
       gcs.bucket(gcsBucket).file(`${gcsPrefix}/calls_extracted_*.json`),
       { format: "JSON", gzip: false }
     );
     console.log("[transform] Step 2 complete, export status:", exportJob.status?.state);
 
+    transformJob.step = "Step 3/4: Loading into target region...";
     console.log("[transform] Step 3: Load GCS → incontact.calls_staging (US)");
     const incontactDataset = bqUS.dataset("incontact");
     const stagingTable = incontactDataset.table("calls_staging");
@@ -303,6 +316,7 @@ router.post("/bq/transform-contacts", async (_req, res) => {
     );
     console.log("[transform] Step 3 complete, load status:", loadJob.status?.state);
 
+    transformJob.step = "Step 4/4: Joining with dispositions...";
     console.log("[transform] Step 4: JOIN with dispositions → incontact.calls (US)");
     const step4Query = `
       CREATE OR REPLACE TABLE \`${projectId}.incontact.calls\` AS
@@ -333,18 +347,43 @@ router.post("/bq/transform-contacts", async (_req, res) => {
       console.warn("[transform] Cleanup warning:", cleanupErr.message);
     }
 
-    res.json({
-      message: "Transform completed (cross-region: raw→GCS→incontact)",
+    transformJob = {
+      status: "completed",
+      step: "Done",
+      startedAt: transformJob.startedAt,
+      completedAt: new Date().toISOString(),
       durationMs,
       durationFormatted: durationMs >= 60000
         ? `${Math.floor(durationMs / 60000)}m ${Math.round((durationMs % 60000) / 1000)}s`
         : `${Math.round(durationMs / 1000)}s`,
       rowsProcessed: totalRows,
-    });
+    };
+    console.log("[transform] Pipeline complete:", transformJob.durationFormatted);
   } catch (err: any) {
-    console.error("[bq/transform-contacts]", err.message);
-    res.status(500).json({ error: err.message });
+    console.error("[transform] Pipeline failed:", err.message);
+    transformJob = {
+      status: "failed",
+      step: transformJob.step,
+      startedAt: transformJob.startedAt,
+      completedAt: new Date().toISOString(),
+      durationMs: Date.now() - startTime,
+      error: err.message,
+    };
   }
+}
+
+router.post("/bq/transform-contacts", async (_req, res) => {
+  if (transformJob.status === "running") {
+    res.status(409).json({ error: "Transform is already running", step: transformJob.step });
+    return;
+  }
+  transformJob = { status: "running", step: "Starting...", startedAt: new Date().toISOString() };
+  runTransformPipeline();
+  res.json({ message: "Transform started", status: "running" });
+});
+
+router.get("/bq/transform-job-status", async (_req, res) => {
+  res.json(transformJob);
 });
 
 router.get("/bq/transform-status", async (_req, res) => {

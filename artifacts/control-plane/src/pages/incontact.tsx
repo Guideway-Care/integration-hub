@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Phone,
   CheckCircle,
@@ -457,17 +457,38 @@ export default function InContactPage() {
     queryFn: () => api.get<{ callsTableCount: number; rawPagesCount: number; lastIngested: string | null; latestContact: string | null }>("/bq/transform-status"),
   });
 
+  const { data: transformJobStatus } = useQuery({
+    queryKey: ["transform-job-status"],
+    queryFn: () => api.get<{
+      status: "idle" | "running" | "completed" | "failed";
+      step: string;
+      startedAt?: string;
+      completedAt?: string;
+      durationMs?: number;
+      durationFormatted?: string;
+      rowsProcessed?: string | null;
+      error?: string;
+    }>("/bq/transform-job-status"),
+    refetchInterval: transformJobStatus?.status === "running" ? 3000 : false,
+  });
+
   const transformMutation = useMutation({
-    mutationFn: () => api.post<{ message: string; durationFormatted: string; rowsProcessed: string | null }>("/bq/transform-contacts"),
-    onSuccess: (data: any) => {
-      queryClient.invalidateQueries({ queryKey: ["transform-status"] });
-      queryClient.invalidateQueries({ queryKey: ["contact-daily-counts"] });
-      toast({ title: "Transform completed", description: `${data.rowsProcessed ? Number(data.rowsProcessed).toLocaleString() + " rows" : "Completed"} in ${data.durationFormatted}` });
+    mutationFn: () => api.post<{ message: string }>("/bq/transform-contacts"),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["transform-job-status"] });
+      toast({ title: "Transform started", description: "Processing contacts in the background. This may take several minutes." });
     },
     onError: (err) => {
-      toast({ title: "Transform failed", description: (err as Error).message, variant: "destructive" });
+      toast({ title: "Transform failed to start", description: (err as Error).message, variant: "destructive" });
     },
   });
+
+  useEffect(() => {
+    if (transformJobStatus?.status === "completed") {
+      queryClient.invalidateQueries({ queryKey: ["transform-status"] });
+      queryClient.invalidateQueries({ queryKey: ["contact-daily-counts"] });
+    }
+  }, [transformJobStatus?.status]);
 
   const runLoaderMutation = useMutation({
     mutationFn: () => api.post("/bq/run-loader"),
@@ -835,9 +856,9 @@ export default function InContactPage() {
             number={2}
             title="Transform Contacts"
             description="Parse raw API payloads into the structured incontact.calls table"
-            status={transformMutation.isPending ? "running" : transformMutation.isSuccess ? "success" : transformMutation.isError ? "error" : "idle"}
+            status={transformJobStatus?.status === "running" ? "running" : transformJobStatus?.status === "completed" ? "success" : transformJobStatus?.status === "failed" ? "error" : "idle"}
             onRun={() => transformMutation.mutate()}
-            isRunning={transformMutation.isPending}
+            isRunning={transformJobStatus?.status === "running" || transformMutation.isPending}
           >
             <div className="flex items-center gap-4 text-sm">
               <div className="text-center">
@@ -856,16 +877,22 @@ export default function InContactPage() {
               )}
               <div className="flex-1" />
             </div>
-            {transformMutation.isSuccess && (
-              <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-md text-xs text-green-700">
-                {(transformMutation.data as any)?.rowsProcessed
-                  ? `${Number((transformMutation.data as any).rowsProcessed).toLocaleString()} rows processed`
-                  : "Transform completed"} in {(transformMutation.data as any)?.durationFormatted}
+            {transformJobStatus?.status === "running" && (
+              <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-md text-xs text-blue-700 flex items-center gap-2">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                {transformJobStatus.step}
               </div>
             )}
-            {transformMutation.isError && (
+            {transformJobStatus?.status === "completed" && (
+              <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-md text-xs text-green-700">
+                {transformJobStatus.rowsProcessed
+                  ? `${Number(transformJobStatus.rowsProcessed).toLocaleString()} rows processed`
+                  : "Transform completed"} in {transformJobStatus.durationFormatted}
+              </div>
+            )}
+            {transformJobStatus?.status === "failed" && (
               <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-md text-xs text-red-700">
-                {(transformMutation.error as Error).message}
+                {transformJobStatus.error}
               </div>
             )}
           </PipelineStep>
