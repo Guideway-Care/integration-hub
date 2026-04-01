@@ -284,7 +284,7 @@ async function runTransformPipeline() {
           ROW_NUMBER() OVER (PARTITION BY CAST(JSON_VALUE(contact, '$.contactId') AS INT64) ORDER BY p.ingested_ts DESC) AS rn
         FROM \`${projectId}.raw.api_payload\` p,
         UNNEST(JSON_QUERY_ARRAY(p.response_body_json, '$.contacts')) AS contact
-        WHERE p.page_status IS NOT NULL
+        WHERE (p.page_status = 'SUCCESS' OR p.http_status_code = 200)
       )
       SELECT * EXCEPT(rn) FROM extracted WHERE rn = 1
     `;
@@ -408,12 +408,12 @@ router.get("/bq/transform-status", async (_req, res) => {
     const callsCount = Number(callsRows[0]?.count || 0);
 
     const [rawRows] = await bqRegional.query({
-      query: `SELECT COUNT(*) as count FROM \`${projectId}.raw.api_payload\` WHERE page_status IS NOT NULL`,
+      query: `SELECT COUNT(*) as count FROM \`${projectId}.raw.api_payload\` WHERE (page_status = 'SUCCESS' OR http_status_code = 200)`,
     });
     const rawPagesCount = Number(rawRows[0]?.count || 0);
 
     const [latestRow] = await bqRegional.query({
-      query: `SELECT MAX(ingested_ts) as last_ingested FROM \`${projectId}.raw.api_payload\` WHERE page_status IS NOT NULL`,
+      query: `SELECT MAX(ingested_ts) as last_ingested FROM \`${projectId}.raw.api_payload\` WHERE (page_status = 'SUCCESS' OR http_status_code = 200)`,
     });
     const lastIngested = latestRow[0]?.last_ingested?.value || null;
 
