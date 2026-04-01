@@ -11,15 +11,12 @@ router.get("/monitor/contact-daily-counts", async (req, res, next) => {
 
     const query = `
       SELECT
-        DATE(JSON_VALUE(contact, '$.contactStartDate')) AS contact_date,
-        EXTRACT(DAYOFWEEK FROM DATE(JSON_VALUE(contact, '$.contactStartDate'))) AS dow,
+        DATE(TIMESTAMP_MICROS(contact_start_date)) AS contact_date,
+        EXTRACT(DAYOFWEEK FROM DATE(TIMESTAMP_MICROS(contact_start_date))) AS dow,
         COUNT(*) AS contact_count
-      FROM \`${projectId}.raw.api_payload\`,
-        UNNEST(JSON_QUERY_ARRAY(response_body_json, '$.contacts')) AS contact
-      WHERE page_status = 'SUCCESS'
-        AND source_system_id = 'nice-cxone'
-        AND endpoint_id = 'nice-cxone-contacts'
-        AND DATE(JSON_VALUE(contact, '$.contactStartDate')) >= @startDate
+      FROM \`${projectId}.incontact.calls\`
+      WHERE contact_start_date IS NOT NULL
+        AND DATE(TIMESTAMP_MICROS(contact_start_date)) >= @startDate
       GROUP BY contact_date, dow
       ORDER BY contact_date
     `;
@@ -27,7 +24,6 @@ router.get("/monitor/contact-daily-counts", async (req, res, next) => {
     const [rows] = await bq.query({
       query,
       params: { startDate },
-      location: "us-central1",
     });
 
     res.json({ data: rows });
