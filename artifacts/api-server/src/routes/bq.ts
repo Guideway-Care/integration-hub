@@ -473,7 +473,7 @@ router.post("/bq/queue-recordings", async (_req, res) => {
       SELECT CAST(c.contact_id AS STRING) AS contact_id
       FROM \`${projectId}.incontact.calls\` c
       LEFT JOIN \`${projectId}.incontact.call_recordings\` r
-        ON c.contact_id = r.contact_id
+        ON CAST(c.contact_id AS STRING) = CAST(r.contact_id AS STRING)
       WHERE c.campaign_name = 'United Regional Health'
         AND c.primary_disposition_name LIKE 'Reached Patient%'
         AND r.contact_id IS NULL
