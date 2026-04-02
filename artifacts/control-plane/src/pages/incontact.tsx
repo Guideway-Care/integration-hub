@@ -512,16 +512,28 @@ export default function InContactPage() {
     },
   });
 
+  const { data: downloadJobStatus } = useQuery({
+    queryKey: ["download-job-status"],
+    queryFn: () => api.get<{ status: string; step: string; error?: string; loaderExecution?: string; processorExecution?: string }>("/bq/download-job-status"),
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === "running" ? 3000 : false;
+    },
+  });
+
   const runProcessorMutation = useMutation({
     mutationFn: () => api.post("/bq/run-job"),
     onSuccess: () => {
-      toast({ title: "Processor job started", description: "Call recordings are being downloaded." });
-      setTimeout(() => {
-        queryClient.invalidateQueries({ queryKey: ["staging-summary"] });
-      }, 5000);
+      toast({ title: "Download pipeline started", description: "Loader will run first, then processor starts automatically." });
+      queryClient.invalidateQueries({ queryKey: ["download-job-status"] });
     },
     onError: (err) => {
-      toast({ title: "Processor job failed", description: (err as Error).message, variant: "destructive" });
+      const msg = (err as Error).message;
+      if (msg.includes("already running")) {
+        toast({ title: "Pipeline already running", description: "Wait for the current run to complete.", variant: "destructive" });
+      } else {
+        toast({ title: "Download pipeline failed", description: msg, variant: "destructive" });
+      }
     },
   });
 
@@ -942,37 +954,60 @@ export default function InContactPage() {
           <PipelineStep
             number={4}
             title="Download Recordings"
-            description="Process the staging queue — download audio files to GCS and metadata to BigQuery"
-            status={runProcessorMutation.isPending ? "running" : runProcessorMutation.isSuccess ? "success" : runProcessorMutation.isError ? "error" : "idle"}
+            description="Load call list into staging queue, then download audio files to GCS and metadata to BigQuery"
+            status={
+              downloadJobStatus?.status === "running" ? "running"
+              : downloadJobStatus?.status === "completed" ? "success"
+              : downloadJobStatus?.status === "failed" ? "error"
+              : runProcessorMutation.isPending ? "running"
+              : "idle"
+            }
             onRun={() => runProcessorMutation.mutate()}
-            isRunning={runProcessorMutation.isPending}
+            isRunning={runProcessorMutation.isPending || downloadJobStatus?.status === "running"}
           >
-            <div className="flex items-center gap-4 text-sm">
-              <div className="text-center">
-                <div className="text-lg font-bold text-green-600">{summary?.downloaded?.toLocaleString() ?? 0}</div>
-                <div className="text-xs text-muted-foreground">Downloaded</div>
-              </div>
-              <div className="text-center">
-                <div className="text-lg font-bold text-blue-600">{summary?.processing ?? 0}</div>
-                <div className="text-xs text-muted-foreground">Processing</div>
-              </div>
-              <div className="text-center">
-                <div className="text-lg font-bold text-red-600">{summary?.failed ?? 0}</div>
-                <div className="text-xs text-muted-foreground">Failed</div>
-              </div>
-              {(summary?.failed ?? 0) > 0 && (
-                <button
-                  onClick={() => resetFailedMutation.mutate()}
-                  disabled={resetFailedMutation.isPending}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 border border-border rounded text-xs hover:bg-muted disabled:opacity-50"
-                >
-                  {resetFailedMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />}
-                  Retry Failed
-                </button>
+            <div className="space-y-3">
+              {downloadJobStatus?.status === "running" && (
+                <div className="flex items-center gap-2 text-sm text-blue-600 bg-blue-50 px-3 py-2 rounded">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>
+                    {downloadJobStatus.step === "loader-running" && "Running loader — moving call list to staging queue..."}
+                    {downloadJobStatus.step === "processor-running" && "Running processor — downloading recordings..."}
+                    {downloadJobStatus.step === "starting-loader" && "Starting loader..."}
+                  </span>
+                </div>
               )}
-              <div className="flex-1" />
-              <div className="text-xs text-muted-foreground">
-                Scheduled: Runs after Step 3 completes
+              {downloadJobStatus?.status === "failed" && downloadJobStatus.error && (
+                <div className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded">
+                  Pipeline error: {downloadJobStatus.error}
+                </div>
+              )}
+              <div className="flex items-center gap-4 text-sm">
+                <div className="text-center">
+                  <div className="text-lg font-bold text-green-600">{summary?.downloaded?.toLocaleString() ?? 0}</div>
+                  <div className="text-xs text-muted-foreground">Downloaded</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-lg font-bold text-blue-600">{summary?.processing ?? 0}</div>
+                  <div className="text-xs text-muted-foreground">Processing</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-lg font-bold text-red-600">{summary?.failed ?? 0}</div>
+                  <div className="text-xs text-muted-foreground">Failed</div>
+                </div>
+                {(summary?.failed ?? 0) > 0 && (
+                  <button
+                    onClick={() => resetFailedMutation.mutate()}
+                    disabled={resetFailedMutation.isPending}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 border border-border rounded text-xs hover:bg-muted disabled:opacity-50"
+                  >
+                    {resetFailedMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />}
+                    Retry Failed
+                  </button>
+                )}
+                <div className="flex-1" />
+                <div className="text-xs text-muted-foreground">
+                  Runs after Step 3 completes
+                </div>
               </div>
             </div>
           </PipelineStep>

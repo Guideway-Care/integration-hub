@@ -183,7 +183,42 @@ async function triggerInContactCloudRunJob(jobName: string) {
   }
 
   const data = await runRes.json();
-  return { message: "Job started", executionName: (data as any).metadata?.name || (data as any).name };
+  const executionName = (data as any).metadata?.name || (data as any).name;
+  return { message: "Job started", executionName };
+}
+
+async function waitForExecution(executionName: string, timeoutMs = 600000, pollIntervalMs = 5000): Promise<{ done: boolean; succeeded: boolean; error?: string }> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const token = await getAccessToken();
+    const res = await fetch(
+      `https://run.googleapis.com/v2/${executionName}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`Failed to poll execution ${executionName}: ${res.status} ${errText}`);
+    }
+
+    const exec = await res.json() as any;
+    const completionTime = exec.completionTime;
+    if (completionTime) {
+      const conditions = exec.conditions || [];
+      const succeeded = conditions.some((c: any) => c.type === "Completed" && c.state === "CONDITION_SUCCEEDED");
+      const failReason = conditions.find((c: any) => c.state === "CONDITION_FAILED");
+      return {
+        done: true,
+        succeeded,
+        error: failReason ? failReason.message || "Execution failed" : undefined,
+      };
+    }
+
+    await new Promise(r => setTimeout(r, pollIntervalMs));
+  }
+
+  return { done: false, succeeded: false, error: "Timed out waiting for execution to complete" };
 }
 
 let transformJob: {
@@ -452,14 +487,61 @@ router.get("/bq/transform-status", async (_req, res) => {
   }
 });
 
+let downloadJob: {
+  status: "idle" | "running" | "completed" | "failed";
+  step: string;
+  startedAt?: string;
+  completedAt?: string;
+  loaderExecution?: string;
+  processorExecution?: string;
+  error?: string;
+} = { status: "idle", step: "" };
+
+router.get("/bq/download-job-status", (_req, res) => {
+  res.json(downloadJob);
+});
+
 router.post("/bq/run-job", async (_req, res) => {
-  try {
-    const result = await triggerInContactCloudRunJob("incontact-call-processor");
-    res.json(result);
-  } catch (err: any) {
-    console.error("[bq/run-job]", err.message);
-    res.status(500).json({ error: err.message });
+  if (downloadJob.status === "running") {
+    res.status(409).json({ error: "Download pipeline is already running", step: downloadJob.step });
+    return;
   }
+
+  downloadJob = { status: "running", step: "starting-loader", startedAt: new Date().toISOString() };
+
+  res.json({ message: "Download pipeline started", status: "running" });
+
+  (async () => {
+    try {
+      downloadJob.step = "loader-running";
+      console.log("[run-job] Step 1: Triggering loader to move call_list.txt → staging queue");
+      const loaderResult = await triggerInContactCloudRunJob("incontact-call-loader");
+      downloadJob.loaderExecution = loaderResult.executionName;
+      console.log("[run-job] Loader triggered:", loaderResult.executionName);
+
+      console.log("[run-job] Waiting for loader to complete...");
+      const loaderStatus = await waitForExecution(loaderResult.executionName);
+      if (!loaderStatus.succeeded) {
+        throw new Error(`Loader failed: ${loaderStatus.error || "unknown error"}`);
+      }
+      console.log("[run-job] Loader completed successfully");
+
+      downloadJob.step = "processor-running";
+      console.log("[run-job] Step 2: Triggering processor to download recordings");
+      const processorResult = await triggerInContactCloudRunJob("incontact-call-processor");
+      downloadJob.processorExecution = processorResult.executionName;
+      console.log("[run-job] Processor triggered:", processorResult.executionName);
+
+      downloadJob.status = "completed";
+      downloadJob.step = "done";
+      downloadJob.completedAt = new Date().toISOString();
+      console.log("[run-job] Download pipeline completed");
+    } catch (err: any) {
+      downloadJob.status = "failed";
+      downloadJob.error = err.message;
+      console.error("[run-job] Pipeline failed:", err.message);
+    }
+  })();
 });
 
 router.post("/bq/queue-recordings", async (_req, res) => {

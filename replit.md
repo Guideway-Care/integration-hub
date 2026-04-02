@@ -87,7 +87,7 @@ Express 5 API server. All routes mount at `/api`.
   - `scheduler.ts` — Cloud Scheduler sync
   - `monitor.ts` — BigQuery contact daily counts for heatmap
   - `incontact.ts` — InContact API proxy (auth test, fetch, endpoints list)
-  - `bq.ts` — BigQuery staging queue management (summary, add, reset, recordings, run jobs)
+  - `bq.ts` — BigQuery staging queue management (summary, add, reset, recordings, queue-recordings, download pipeline orchestration with loader→processor sequencing)
 - Depends on: `@workspace/db`, `@workspace/api-zod`
 - `pnpm --filter @workspace/api-server run dev` — dev server
 - `pnpm --filter @workspace/api-server run build` — production esbuild bundle
@@ -105,7 +105,7 @@ React + Vite frontend dashboard. "API Controller Hub" branding throughout.
   - Run Detail — Metrics cards + event log timeline
   - Run New — Form to trigger manual extraction runs (toast on success/error)
   - Monitor — BigQuery contact volume heatmap
-  - InContact — Unified pipeline page with tabs: Pipeline (3-step flow with Run Now buttons, date filters, monthly calendar grid with DOW averages), Staging Queue (queue management + job triggers), Recordings (call recordings table), API Explorer (raw API testing)
+  - InContact — Unified pipeline page with tabs: Pipeline (4-step flow: Retrieve → Transform → Queue → Download, with Run Now buttons, date filters, monthly calendar grid with DOW averages), Staging Queue (queue management + job triggers), Recordings (call recordings table), API Explorer (raw API testing)
   - Audit Log — Filterable audit trail of all platform changes with pagination (skeleton loading)
   - Scripts — Copiable BigQuery SQL setup scripts
 - **Shared components**: `table-skeleton.tsx` (TableSkeleton, CardSkeleton, MetricsSkeleton)
