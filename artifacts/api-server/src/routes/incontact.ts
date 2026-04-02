@@ -185,6 +185,8 @@ router.post("/incontact/fetch", async (req, res) => {
       Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
     }
 
+    console.log(`[incontact/fetch] URL: ${url.toString()}`);
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30000);
 
@@ -218,35 +220,49 @@ router.post("/incontact/fetch", async (req, res) => {
   }
 });
 
+async function fetchInContactEndpoint(
+  token: string,
+  resourceServerBaseUri: string,
+  endpointPath: string,
+  params?: Record<string, string>,
+): Promise<any> {
+  const url = new URL(`${resourceServerBaseUri}${endpointPath}`);
+  if (params) {
+    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
+  }
+  console.log(`[incontact] Fetching: ${url.toString()}`);
+  const apiResponse = await fetch(url.toString(), {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+    },
+  });
+  if (!apiResponse.ok) {
+    const errText = await apiResponse.text();
+    throw new Error(`API request failed (${apiResponse.status}): ${errText.substring(0, 200)}`);
+  }
+  return apiResponse.json();
+}
+
 router.post("/incontact/sync-dispositions", async (_req, res) => {
   try {
     const { token, resourceServerBaseUri } = await getInContactBearerToken();
     const bq = getBigQueryClient();
 
+    const endpointPath = "/incontactapi/services/v30.0/dispositions";
     let allDispositions: any[] = [];
     let skip = 0;
     const top = 1000;
     let hasMore = true;
 
     while (hasMore) {
-      const url = new URL(`${resourceServerBaseUri}/incontactapi/services/v30.0/dispositions`);
-      url.searchParams.set("skip", String(skip));
-      url.searchParams.set("top", String(top));
-
-      const apiResponse = await fetch(url.toString(), {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: "application/json",
-        },
+      const data = await fetchInContactEndpoint(token, resourceServerBaseUri, endpointPath, {
+        skip: String(skip),
+        top: String(top),
       });
 
-      if (!apiResponse.ok) {
-        const errText = await apiResponse.text();
-        throw new Error(`API request failed (${apiResponse.status}): ${errText}`);
-      }
-
-      const data = await apiResponse.json() as any;
       const dispositions = data.resultSet?.dispositions || data.dispositions || [];
+      console.log(`[sync-dispositions] Page at skip=${skip}: got ${dispositions.length} dispositions. Keys: ${JSON.stringify(Object.keys(data))}`);
       allDispositions = allDispositions.concat(dispositions);
 
       if (dispositions.length < top) {
