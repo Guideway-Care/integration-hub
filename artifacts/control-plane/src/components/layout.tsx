@@ -44,7 +44,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             <Plug className="w-4 h-4 text-primary-foreground" />
           </div>
           <div>
-            <h1 className="text-sm font-semibold text-sidebar-foreground">API Controller Hub</h1>
+            <h1 className="text-sm font-semibold text-sidebar-foreground">Integration Hub</h1>
             <p className="text-[10px] text-muted-foreground">Integration Platform</p>
           </div>
         </div>
@@ -84,7 +84,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           <button onClick={() => setMobileOpen(true)}>
             <Menu className="w-5 h-5" />
           </button>
-          <span className="ml-3 text-sm font-semibold">API Controller Hub</span>
+          <span className="ml-3 text-sm font-semibold">Integration Hub</span>
         </header>
         <main className="flex-1 p-6 overflow-auto">{children}</main>
       </div>
