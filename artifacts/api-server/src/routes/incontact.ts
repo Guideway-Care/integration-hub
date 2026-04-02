@@ -62,6 +62,19 @@ const ENDPOINT_DEFS: EndpointDef[] = [
     ],
   },
   {
+    path: "/incontactapi/services/v30.0/dispositions",
+    name: "Dispositions",
+    description: "Retrieve all disposition codes configured in the NICE CXone system. Dispositions are used to categorize the outcome of a contact.",
+    method: "GET",
+    category: "Contacts",
+    params: [
+      { name: "updatedSince", label: "Updated Since", type: "string", placeholder: "2026-04-01T00:00:00Z", description: "Only return dispositions updated after this timestamp" },
+      { name: "fields", label: "Fields", type: "string", placeholder: "dispositionId,dispositionName", description: "Comma-separated list of fields to return" },
+      { name: "skip", label: "Skip", type: "number", placeholder: "0", description: "Number of records to skip (pagination)" },
+      { name: "top", label: "Top", type: "number", placeholder: "100", description: "Max records to return" },
+    ],
+  },
+  {
     path: "/incontactapi/services/v30.0/agents",
     name: "Agents",
     description: "List all agents configured in the NICE CXone system with their profiles and status.",
