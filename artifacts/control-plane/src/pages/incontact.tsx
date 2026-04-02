@@ -1068,19 +1068,11 @@ export default function InContactPage() {
                 </button>
                 <button
                   onClick={() => runProcessorMutation.mutate()}
-                  disabled={runProcessorMutation.isPending}
+                  disabled={runProcessorMutation.isPending || downloadJobStatus?.status === "running"}
                   className="w-full inline-flex items-center gap-2 px-3 py-2 border border-border rounded-md text-sm hover:bg-muted disabled:opacity-50"
                 >
-                  {runProcessorMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-                  Run Call Processor Job
-                </button>
-                <button
-                  onClick={() => runLoaderMutation.mutate()}
-                  disabled={runLoaderMutation.isPending}
-                  className="w-full inline-flex items-center gap-2 px-3 py-2 border border-border rounded-md text-sm hover:bg-muted disabled:opacity-50"
-                >
-                  {runLoaderMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Database className="w-4 h-4" />}
-                  Run Call Loader Job
+                  {(runProcessorMutation.isPending || downloadJobStatus?.status === "running") ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+                  Run Download Pipeline (Loader → Processor)
                 </button>
               </div>
             </div>
