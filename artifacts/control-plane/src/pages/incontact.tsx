@@ -361,6 +361,11 @@ export default function InContactPage() {
     queryKey: ["staging-summary", filterDates.startDate, filterDates.endDate],
     queryFn: () => api.get<StagingSummary>(`/bq/staging-summary${filterSuffix}`),
     retry: false,
+    refetchInterval: (query) => {
+      const d = query.state.data;
+      const hasActive = (d?.pending ?? 0) > 0 || (d?.processing ?? 0) > 0;
+      return hasActive ? 10000 : false;
+    },
   });
 
   const { data: queue, isLoading: queueLoading } = useQuery({
@@ -956,22 +961,30 @@ export default function InContactPage() {
             title="Download Recordings"
             description="Load call list into staging queue, then download audio files to GCS and metadata to BigQuery"
             status={
-              downloadJobStatus?.status === "running" ? "running"
-              : downloadJobStatus?.status === "completed" ? "success"
+              (summary?.processing ?? 0) > 0 || downloadJobStatus?.status === "running" ? "running"
+              : (summary?.failed ?? 0) > 0 ? "error"
               : downloadJobStatus?.status === "failed" ? "error"
-              : runProcessorMutation.isPending ? "running"
+              : (summary?.downloaded ?? 0) > 0 && (summary?.pending ?? 0) === 0 ? "success"
               : "idle"
             }
             onRun={() => runProcessorMutation.mutate()}
-            isRunning={runProcessorMutation.isPending || downloadJobStatus?.status === "running"}
+            isRunning={runProcessorMutation.isPending || downloadJobStatus?.status === "running" || (summary?.processing ?? 0) > 0}
           >
             <div className="space-y-3">
-              {downloadJobStatus?.status === "running" && (
+              {((summary?.processing ?? 0) > 0 || (summary?.pending ?? 0) > 0) && (
+                <div className="flex items-center gap-2 text-sm text-blue-600 bg-blue-50 px-3 py-2 rounded">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>
+                    Processor running — {summary?.pending?.toLocaleString() ?? 0} pending, {summary?.processing ?? 0} in progress
+                  </span>
+                </div>
+              )}
+              {downloadJobStatus?.status === "running" && (summary?.processing ?? 0) === 0 && (
                 <div className="flex items-center gap-2 text-sm text-blue-600 bg-blue-50 px-3 py-2 rounded">
                   <Loader2 className="w-4 h-4 animate-spin" />
                   <span>
                     {downloadJobStatus.step === "loader-running" && "Running loader — moving call list to staging queue..."}
-                    {downloadJobStatus.step === "processor-running" && "Running processor — downloading recordings..."}
+                    {downloadJobStatus.step === "processor-running" && "Starting processor..."}
                     {downloadJobStatus.step === "starting-loader" && "Starting loader..."}
                   </span>
                 </div>
@@ -985,6 +998,10 @@ export default function InContactPage() {
                 <div className="text-center">
                   <div className="text-lg font-bold text-green-600">{summary?.downloaded?.toLocaleString() ?? 0}</div>
                   <div className="text-xs text-muted-foreground">Downloaded</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-lg font-bold text-yellow-600">{summary?.pending?.toLocaleString() ?? 0}</div>
+                  <div className="text-xs text-muted-foreground">Pending</div>
                 </div>
                 <div className="text-center">
                   <div className="text-lg font-bold text-blue-600">{summary?.processing ?? 0}</div>
@@ -1004,10 +1021,6 @@ export default function InContactPage() {
                     Retry Failed
                   </button>
                 )}
-                <div className="flex-1" />
-                <div className="text-xs text-muted-foreground">
-                  Runs after Step 3 completes
-                </div>
               </div>
             </div>
           </PipelineStep>
