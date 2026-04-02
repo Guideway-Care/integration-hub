@@ -101,7 +101,7 @@ router.get("/bq/recordings", async (req, res) => {
   }
 });
 
-router.get("/bq/recording-url/:contactId", async (req, res) => {
+router.get("/bq/recording-stream/:contactId", async (req, res) => {
   try {
     const { contactId } = req.params;
     const gcs = getGCSClient();
@@ -114,16 +114,29 @@ router.get("/bq/recording-url/:contactId", async (req, res) => {
       return;
     }
 
-    const [url] = await file.getSignedUrl({
-      version: "v4",
-      action: "read",
-      expires: Date.now() + 60 * 60 * 1000,
-    });
+    const [metadata] = await file.getMetadata();
+    res.set("Content-Type", "audio/mp4");
+    res.set("Content-Length", String(metadata.size));
+    res.set("Content-Disposition", `inline; filename="${contactId}.mp4"`);
+    res.set("Accept-Ranges", "bytes");
 
-    res.json({ url, contactId });
+    const range = req.headers.range;
+    if (range && metadata.size) {
+      const parts = range.replace(/bytes=/, "").split("-");
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : Number(metadata.size) - 1;
+      res.status(206);
+      res.set("Content-Range", `bytes ${start}-${end}/${metadata.size}`);
+      res.set("Content-Length", String(end - start + 1));
+      file.createReadStream({ start, end }).pipe(res);
+    } else {
+      file.createReadStream().pipe(res);
+    }
   } catch (err: any) {
-    console.error("[bq/recording-url]", err.message);
-    res.status(500).json({ error: err.message });
+    console.error("[bq/recording-stream]", err.message);
+    if (!res.headersSent) {
+      res.status(500).json({ error: err.message });
+    }
   }
 });
 

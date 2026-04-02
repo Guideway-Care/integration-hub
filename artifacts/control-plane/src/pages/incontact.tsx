@@ -405,20 +405,12 @@ export default function InContactPage() {
   const recTotal = recData?.total ?? 0;
   const recTotalPages = Math.max(1, Math.ceil(recTotal / recPageSize));
 
-  async function handlePlayRecording(rec: Recording) {
+  function handlePlayRecording(rec: Recording) {
     const contactId = rec.acd_contact_id || rec.contact_id;
     setSelectedRecording(rec);
-    setPlaybackUrl(null);
+    setPlaybackUrl(`/api/bq/recording-stream/${contactId}`);
     setPlaybackError(null);
-    setPlaybackLoading(true);
-    try {
-      const data = await api.get<{ url: string }>(`/bq/recording-url/${contactId}`);
-      setPlaybackUrl(data.url);
-    } catch (err: any) {
-      setPlaybackError(err?.message || "Failed to load recording");
-    } finally {
-      setPlaybackLoading(false);
-    }
+    setPlaybackLoading(false);
   }
 
   const { data: callListStatus } = useQuery({
