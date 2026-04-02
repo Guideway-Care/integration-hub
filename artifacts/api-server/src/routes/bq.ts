@@ -61,21 +61,68 @@ router.get("/bq/staging-queue", async (_req, res) => {
   }
 });
 
-router.get("/bq/recordings", async (_req, res) => {
+router.get("/bq/recordings", async (req, res) => {
   try {
     const bq = getBigQueryClient("US");
     const { recordings } = getBqTables();
-    const [rows] = await bq.query({
-      query: `SELECT id, contact_id, acd_contact_id, agent_id, agent_name, 
+    const search = (req.query.search as string) || "";
+    const limit = Math.min(parseInt(req.query.limit as string) || 500, 2000);
+    const offset = parseInt(req.query.offset as string) || 0;
+
+    let whereClause = "";
+    const params: Record<string, string> = {};
+    if (search.trim()) {
+      whereClause = `WHERE LOWER(CAST(acd_contact_id AS STRING)) LIKE LOWER(@search)
+        OR LOWER(COALESCE(agent_name, '')) LIKE LOWER(@search)
+        OR LOWER(COALESCE(file_name, '')) LIKE LOWER(@search)
+        OR LOWER(CAST(contact_id AS STRING)) LIKE LOWER(@search)`;
+      params.search = `%${search.trim()}%`;
+    }
+
+    const countQuery = `SELECT COUNT(*) as total FROM \`${recordings}\` ${whereClause}`;
+    const [countRows] = await bq.query({ query: countQuery, params });
+
+    const dataQuery = `SELECT id, contact_id, acd_contact_id, agent_id, agent_name, 
               FORMAT_TIMESTAMP('%Y-%m-%dT%H:%M:%SZ', start_date) as start_date,
               FORMAT_TIMESTAMP('%Y-%m-%dT%H:%M:%SZ', end_date) as end_date,
               duration_seconds, media_type, direction, file_name, gcs_uri, file_size_bytes,
               call_tags, FORMAT_TIMESTAMP('%Y-%m-%dT%H:%M:%SZ', ingestion_timestamp) as ingestion_timestamp
-              FROM \`${recordings}\` ORDER BY ingestion_timestamp DESC LIMIT 200`,
+              FROM \`${recordings}\` ${whereClause} ORDER BY start_date DESC LIMIT @limit OFFSET @offset`;
+    const [rows] = await bq.query({
+      query: dataQuery,
+      params: { ...params, limit, offset },
+      types: { limit: "INT64", offset: "INT64" },
     });
-    res.json(rows);
+
+    res.json({ rows, total: countRows[0]?.total ?? 0, limit, offset });
   } catch (err: any) {
     console.error("[bq/recordings]", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get("/bq/recording-url/:contactId", async (req, res) => {
+  try {
+    const { contactId } = req.params;
+    const gcs = getGCSClient();
+    const bucket = gcs.bucket("incontact-audio");
+    const file = bucket.file(`${contactId}.mp4`);
+
+    const [exists] = await file.exists();
+    if (!exists) {
+      res.status(404).json({ error: `Recording not found: ${contactId}.mp4` });
+      return;
+    }
+
+    const [url] = await file.getSignedUrl({
+      version: "v4",
+      action: "read",
+      expires: Date.now() + 60 * 60 * 1000,
+    });
+
+    res.json({ url, contactId });
+  } catch (err: any) {
+    console.error("[bq/recording-url]", err.message);
     res.status(500).json({ error: err.message });
   }
 });

@@ -295,6 +295,11 @@ export default function InContactPage() {
   const [stagingPage, setStagingPage] = useState(0);
   const [recPage, setRecPage] = useState(0);
   const [recSearch, setRecSearch] = useState("");
+  const [recSearchDebounced, setRecSearchDebounced] = useState("");
+  const [selectedRecording, setSelectedRecording] = useState<Recording | null>(null);
+  const [playbackUrl, setPlaybackUrl] = useState<string | null>(null);
+  const [playbackLoading, setPlaybackLoading] = useState(false);
+  const [playbackError, setPlaybackError] = useState<string | null>(null);
   const [apiEndpoint, setApiEndpoint] = useState("/media-playback/v1/contacts");
   const [apiParams, setApiParams] = useState("");
   const [fetchResult, setFetchResult] = useState<any>(null);
@@ -375,12 +380,46 @@ export default function InContactPage() {
     enabled: tab === "staging",
   });
 
-  const { data: recordings, isLoading: recLoading } = useQuery({
-    queryKey: ["recordings"],
-    queryFn: () => api.get<Recording[]>("/bq/recordings"),
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setRecSearchDebounced(recSearch);
+      setRecPage(0);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [recSearch]);
+
+  const recPageSize = 50;
+  const recQueryParams = new URLSearchParams();
+  if (recSearchDebounced) recQueryParams.set("search", recSearchDebounced);
+  recQueryParams.set("limit", String(recPageSize));
+  recQueryParams.set("offset", String(recPage * recPageSize));
+
+  const { data: recData, isLoading: recLoading } = useQuery({
+    queryKey: ["recordings", recSearchDebounced, recPage],
+    queryFn: () => api.get<{ rows: Recording[]; total: number }>(`/bq/recordings?${recQueryParams.toString()}`),
     retry: false,
     enabled: tab === "recordings",
   });
+
+  const recRows = recData?.rows ?? [];
+  const recTotal = recData?.total ?? 0;
+  const recTotalPages = Math.max(1, Math.ceil(recTotal / recPageSize));
+
+  async function handlePlayRecording(rec: Recording) {
+    const contactId = rec.acd_contact_id || rec.contact_id;
+    setSelectedRecording(rec);
+    setPlaybackUrl(null);
+    setPlaybackError(null);
+    setPlaybackLoading(true);
+    try {
+      const data = await api.get<{ url: string }>(`/bq/recording-url/${contactId}`);
+      setPlaybackUrl(data.url);
+    } catch (err: any) {
+      setPlaybackError(err?.message || "Failed to load recording");
+    } finally {
+      setPlaybackLoading(false);
+    }
+  }
 
   const { data: callListStatus } = useQuery({
     queryKey: ["call-list-status"],
@@ -603,18 +642,7 @@ export default function InContactPage() {
   const stagingTotalPages = Math.max(1, Math.ceil(allQueueItems.length / pageSize));
   const stagingItems = allQueueItems.slice(stagingPage * pageSize, (stagingPage + 1) * pageSize);
 
-  const allRecordings = recordings ?? [];
-  const filteredRec = recSearch
-    ? allRecordings.filter(
-        (r) =>
-          r.acd_contact_id?.includes(recSearch) ||
-          r.contact_id?.includes(recSearch) ||
-          r.agent_name?.toLowerCase().includes(recSearch.toLowerCase()) ||
-          r.file_name?.includes(recSearch)
-      )
-    : allRecordings;
-  const recTotalPages = Math.max(1, Math.ceil(filteredRec.length / pageSize));
-  const pagedRec = filteredRec.slice(recPage * pageSize, (recPage + 1) * pageSize);
+  
 
   const tabs: { id: Tab; label: string }[] = [
     { id: "pipeline", label: "Pipeline" },
@@ -1171,34 +1199,73 @@ export default function InContactPage() {
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <p className="text-sm text-muted-foreground">
-              {allRecordings.length.toLocaleString()} recordings stored in BigQuery
+              {recTotal.toLocaleString()} recordings in BigQuery
             </p>
-            <div className="flex gap-2">
-              <a
-                href="/api/export/recordings?format=csv"
-                download
-                className="text-xs border border-border rounded px-3 py-1.5 hover:bg-muted transition-colors flex items-center gap-1.5"
-              >
-                <Download className="w-3 h-3" /> CSV
-              </a>
-            </div>
           </div>
 
-          {!recLoading && allRecordings.length > 0 && (
-            <div className="relative">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-              <input
-                value={recSearch}
-                onChange={(e) => { setRecSearch(e.target.value); setRecPage(0); }}
-                placeholder="Search by contact ID, agent name, or file name..."
-                className="w-full pl-9 pr-3 py-2 border border-input rounded-md text-sm bg-background"
-              />
+          <div className="relative">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <input
+              value={recSearch}
+              onChange={(e) => setRecSearch(e.target.value)}
+              placeholder="Search by contact ID, agent name, or file name..."
+              className="w-full pl-9 pr-3 py-2 border border-input rounded-md text-sm bg-background"
+            />
+          </div>
+
+          {selectedRecording && (
+            <div className="border border-primary/30 bg-primary/5 rounded-lg p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <FileAudio className="w-5 h-5 text-primary" />
+                  <div>
+                    <div className="text-sm font-medium">
+                      Contact {selectedRecording.acd_contact_id || selectedRecording.contact_id}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {selectedRecording.agent_name || "Unknown Agent"} &middot; {selectedRecording.start_date ? new Date(selectedRecording.start_date).toLocaleString() : ""} &middot; {formatDuration(selectedRecording.duration_seconds)}
+                    </div>
+                  </div>
+                </div>
+                <button
+                  onClick={() => { setSelectedRecording(null); setPlaybackUrl(null); setPlaybackError(null); }}
+                  className="p-1 hover:bg-muted rounded"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              {playbackLoading && (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground py-4 justify-center">
+                  <Loader2 className="w-4 h-4 animate-spin" /> Loading recording...
+                </div>
+              )}
+              {playbackError && (
+                <div className="flex items-center gap-2 text-sm text-red-600 py-2">
+                  <XCircle className="w-4 h-4" /> {playbackError}
+                </div>
+              )}
+              {playbackUrl && (
+                <div>
+                  <audio controls className="w-full" src={playbackUrl} autoPlay>
+                    Your browser does not support the audio element.
+                  </audio>
+                  <div className="flex justify-end mt-2">
+                    <a
+                      href={playbackUrl}
+                      download={`${selectedRecording.acd_contact_id || selectedRecording.contact_id}.mp4`}
+                      className="text-xs text-primary hover:underline flex items-center gap-1"
+                    >
+                      <Download className="w-3 h-3" /> Download MP4
+                    </a>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
           {recLoading ? (
-            <TableSkeleton rows={10} cols={8} />
-          ) : filteredRec.length === 0 ? (
+            <TableSkeleton rows={10} cols={7} />
+          ) : recRows.length === 0 ? (
             <div className="text-center py-12 border border-dashed border-border rounded-lg">
               <FileAudio className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
               <p className="text-muted-foreground">{recSearch ? "No matching recordings" : "No recordings found"}</p>
@@ -1209,47 +1276,55 @@ export default function InContactPage() {
                 <table className="w-full text-sm">
                   <thead className="bg-muted/50">
                     <tr>
+                      <th className="w-10 px-3 py-3"></th>
                       <th className="text-left px-4 py-3 font-medium text-muted-foreground">Contact ID</th>
                       <th className="text-left px-4 py-3 font-medium text-muted-foreground">Agent</th>
-                      <th className="text-left px-4 py-3 font-medium text-muted-foreground">Start</th>
+                      <th className="text-left px-4 py-3 font-medium text-muted-foreground">Date</th>
                       <th className="text-left px-4 py-3 font-medium text-muted-foreground">Duration</th>
                       <th className="text-left px-4 py-3 font-medium text-muted-foreground">Direction</th>
                       <th className="text-left px-4 py-3 font-medium text-muted-foreground">Size</th>
-                      <th className="text-left px-4 py-3 font-medium text-muted-foreground">GCS</th>
-                      <th className="text-left px-4 py-3 font-medium text-muted-foreground">Ingested</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {pagedRec.map((r) => (
-                      <tr key={r.id} className="border-t border-border hover:bg-muted/30">
-                        <td className="px-4 py-3 font-mono text-xs">{r.acd_contact_id || r.contact_id}</td>
-                        <td className="px-4 py-3 text-xs">{r.agent_name || r.agent_id || "—"}</td>
-                        <td className="px-4 py-3 text-xs text-muted-foreground">{r.start_date ? new Date(r.start_date).toLocaleString() : "—"}</td>
-                        <td className="px-4 py-3 text-xs">{formatDuration(r.duration_seconds)}</td>
-                        <td className="px-4 py-3 text-xs">{r.direction || "—"}</td>
-                        <td className="px-4 py-3 text-xs">{formatBytes(r.file_size_bytes)}</td>
-                        <td className="px-4 py-3 text-xs font-mono text-muted-foreground truncate max-w-[200px]">{r.gcs_uri || "—"}</td>
-                        <td className="px-4 py-3 text-xs text-muted-foreground">{r.ingestion_timestamp ? new Date(r.ingestion_timestamp).toLocaleString() : "—"}</td>
-                      </tr>
-                    ))}
+                    {recRows.map((r) => {
+                      const cid = r.acd_contact_id || r.contact_id;
+                      const isSelected = selectedRecording?.id === r.id;
+                      return (
+                        <tr
+                          key={r.id}
+                          onClick={() => handlePlayRecording(r)}
+                          className={`border-t border-border cursor-pointer transition-colors ${
+                            isSelected ? "bg-primary/10" : "hover:bg-muted/30"
+                          }`}
+                        >
+                          <td className="px-3 py-3 text-center">
+                            <Play className={`w-4 h-4 ${isSelected ? "text-primary" : "text-muted-foreground"}`} />
+                          </td>
+                          <td className="px-4 py-3 font-mono text-xs">{cid}</td>
+                          <td className="px-4 py-3 text-xs">{r.agent_name || r.agent_id || "—"}</td>
+                          <td className="px-4 py-3 text-xs text-muted-foreground">{r.start_date ? new Date(r.start_date).toLocaleString() : "—"}</td>
+                          <td className="px-4 py-3 text-xs">{formatDuration(r.duration_seconds)}</td>
+                          <td className="px-4 py-3 text-xs">{r.direction || "—"}</td>
+                          <td className="px-4 py-3 text-xs">{formatBytes(r.file_size_bytes)}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
-              {recTotalPages > 1 && (
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-muted-foreground">
-                    Showing {recPage * pageSize + 1}–{Math.min((recPage + 1) * pageSize, filteredRec.length)} of {filteredRec.length}
-                  </span>
-                  <div className="flex gap-1">
-                    <button disabled={recPage === 0} onClick={() => setRecPage(recPage - 1)} className="p-1.5 border border-border rounded hover:bg-muted disabled:opacity-30">
-                      <ChevronLeft className="w-4 h-4" />
-                    </button>
-                    <button disabled={recPage >= recTotalPages - 1} onClick={() => setRecPage(recPage + 1)} className="p-1.5 border border-border rounded hover:bg-muted disabled:opacity-30">
-                      <ChevronRight className="w-4 h-4" />
-                    </button>
-                  </div>
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted-foreground">
+                  Showing {recPage * recPageSize + 1}–{Math.min((recPage + 1) * recPageSize, recTotal)} of {recTotal.toLocaleString()}
+                </span>
+                <div className="flex gap-1">
+                  <button disabled={recPage === 0} onClick={() => setRecPage(recPage - 1)} className="p-1.5 border border-border rounded hover:bg-muted disabled:opacity-30">
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                  <button disabled={recPage >= recTotalPages - 1} onClick={() => setRecPage(recPage + 1)} className="p-1.5 border border-border rounded hover:bg-muted disabled:opacity-30">
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
                 </div>
-              )}
+              </div>
             </>
           )}
         </div>
