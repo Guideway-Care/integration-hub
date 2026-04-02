@@ -26,11 +26,12 @@ import {
   Filter,
   Calendar,
   X,
+  BookOpen,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { MetricsSkeleton, TableSkeleton } from "@/components/table-skeleton";
 
-type Tab = "pipeline" | "monitor" | "staging" | "recordings" | "api-explorer";
+type Tab = "pipeline" | "monitor" | "staging" | "recordings" | "api-explorer" | "docs";
 
 interface StagingSummary {
   pending: number;
@@ -657,6 +658,7 @@ export default function InContactPage() {
     { id: "staging", label: "Staging Queue" },
     { id: "recordings", label: "Recordings" },
     { id: "api-explorer", label: "API Explorer" },
+    { id: "docs", label: "Documentation" },
   ];
 
   return (
@@ -1453,6 +1455,323 @@ export default function InContactPage() {
           </div>
         </div>
       )}
+
+      {tab === "docs" && (
+        <div className="flex gap-6">
+          <DocsSidebar />
+        </div>
+      )}
+    </div>
+  );
+}
+
+type DocSection = "pipeline" | "monitor" | "staging" | "recordings" | "api-explorer" | "architecture";
+
+function DocsSidebar() {
+  const [section, setSection] = useState<DocSection>("pipeline");
+
+  const sections: { id: DocSection; label: string; icon: React.ReactNode }[] = [
+    { id: "pipeline", label: "Pipeline", icon: <ArrowRight className="w-4 h-4" /> },
+    { id: "monitor", label: "Monitor", icon: <Database className="w-4 h-4" /> },
+    { id: "staging", label: "Staging Queue", icon: <Clock className="w-4 h-4" /> },
+    { id: "recordings", label: "Recordings", icon: <FileAudio className="w-4 h-4" /> },
+    { id: "api-explorer", label: "API Explorer", icon: <Send className="w-4 h-4" /> },
+    { id: "architecture", label: "Architecture", icon: <Database className="w-4 h-4" /> },
+  ];
+
+  return (
+    <>
+      <div className="w-56 shrink-0 space-y-1">
+        <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide px-2 mb-2">Sections</h3>
+        {sections.map((s) => (
+          <button
+            key={s.id}
+            onClick={() => setSection(s.id)}
+            className={`w-full flex items-center gap-2 text-left px-3 py-2 rounded-md text-sm transition-colors ${
+              section === s.id
+                ? "bg-primary/10 text-primary font-medium"
+                : "text-muted-foreground hover:bg-muted hover:text-foreground"
+            }`}
+          >
+            {s.icon}
+            {s.label}
+          </button>
+        ))}
+      </div>
+      <div className="flex-1 min-w-0">
+        <DocsContent section={section} />
+      </div>
+    </>
+  );
+}
+
+function DocsContent({ section }: { section: DocSection }) {
+  const content: Record<DocSection, React.ReactNode> = {
+    pipeline: (
+      <div className="space-y-6">
+        <div>
+          <h2 className="text-lg font-semibold mb-2">Pipeline</h2>
+          <p className="text-sm text-muted-foreground leading-relaxed">
+            The Pipeline tab provides a sequential, 4-step workflow for ingesting call recordings from NICE CXone into BigQuery and Google Cloud Storage. Each step depends on the previous one completing successfully.
+          </p>
+        </div>
+        <div className="space-y-4">
+          <div className="border border-border rounded-lg p-4 bg-card">
+            <h3 className="text-sm font-semibold flex items-center gap-2 mb-2">
+              <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-primary/10 text-primary text-xs font-bold">1</span>
+              Retrieve Contacts
+            </h3>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Fetches completed contact records from the NICE CXone API for a specified date range. The data is stored as raw JSON pages in the <code className="bg-muted px-1 rounded">raw.api_responses</code> BigQuery table. Each page contains up to 1,000 contacts. The extraction is managed as a Cloud Run job that handles pagination and rate limiting automatically.
+            </p>
+            <div className="mt-2 text-xs text-muted-foreground">
+              <span className="font-medium">Inputs:</span> Start Date, End Date<br />
+              <span className="font-medium">Output:</span> Raw API pages in <code className="bg-muted px-1 rounded">raw.api_responses</code>
+            </div>
+          </div>
+          <div className="border border-border rounded-lg p-4 bg-card">
+            <h3 className="text-sm font-semibold flex items-center gap-2 mb-2">
+              <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-primary/10 text-primary text-xs font-bold">2</span>
+              Transform Contacts
+            </h3>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Parses the raw JSON pages from Step 1 and transforms them into the structured <code className="bg-muted px-1 rounded">incontact.calls</code> table. Handles both old and new API payload formats. Deduplicates by contact ID, extracting fields like agent name, disposition, duration, skill, and team.
+            </p>
+            <div className="mt-2 text-xs text-muted-foreground">
+              <span className="font-medium">Input:</span> <code className="bg-muted px-1 rounded">raw.api_responses</code><br />
+              <span className="font-medium">Output:</span> <code className="bg-muted px-1 rounded">incontact.calls</code>
+            </div>
+          </div>
+          <div className="border border-border rounded-lg p-4 bg-card">
+            <h3 className="text-sm font-semibold flex items-center gap-2 mb-2">
+              <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-primary/10 text-primary text-xs font-bold">3</span>
+              Queue Recordings
+            </h3>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Queries <code className="bg-muted px-1 rounded">incontact.calls</code> for United Regional Health contacts with a "Reached Patient" disposition that don't already have a downloaded recording. Writes the missing contact IDs to <code className="bg-muted px-1 rounded">gs://incontact-audio/call_list/call_list.txt</code>.
+            </p>
+            <div className="mt-2 text-xs text-muted-foreground">
+              <span className="font-medium">Input:</span> <code className="bg-muted px-1 rounded">incontact.calls</code> + <code className="bg-muted px-1 rounded">incontact.call_recordings</code><br />
+              <span className="font-medium">Output:</span> <code className="bg-muted px-1 rounded">call_list.txt</code> in GCS
+            </div>
+          </div>
+          <div className="border border-border rounded-lg p-4 bg-card">
+            <h3 className="text-sm font-semibold flex items-center gap-2 mb-2">
+              <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-primary/10 text-primary text-xs font-bold">4</span>
+              Download Recordings
+            </h3>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Two-phase Cloud Run job execution. First, the <strong>loader</strong> reads <code className="bg-muted px-1 rounded">call_list.txt</code> and inserts contact IDs into the <code className="bg-muted px-1 rounded">staging_call_queue</code> table. Then the <strong>processor</strong> downloads each MP4 recording from the NICE CXone Media Playback API and uploads it to <code className="bg-muted px-1 rounded">gs://incontact-audio/</code>, recording metadata into <code className="bg-muted px-1 rounded">incontact.call_recordings</code>.
+            </p>
+            <div className="mt-2 text-xs text-muted-foreground">
+              <span className="font-medium">Input:</span> <code className="bg-muted px-1 rounded">call_list.txt</code><br />
+              <span className="font-medium">Output:</span> MP4 files in GCS + metadata in <code className="bg-muted px-1 rounded">call_recordings</code><br />
+              <span className="font-medium">Concurrency:</span> Only one processor runs at a time (BQ-level guard)
+            </div>
+          </div>
+        </div>
+      </div>
+    ),
+    monitor: (
+      <div className="space-y-6">
+        <div>
+          <h2 className="text-lg font-semibold mb-2">Monitor</h2>
+          <p className="text-sm text-muted-foreground leading-relaxed">
+            The Monitor tab provides a dashboard view of the entire InContact pipeline's output. It shows aggregate statistics and a calendar heatmap of daily contact volumes.
+          </p>
+        </div>
+        <div className="space-y-4">
+          <div className="border border-border rounded-lg p-4 bg-card">
+            <h3 className="text-sm font-semibold mb-2">Filter Bar</h3>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Time-range filter at the top with presets (All Time, Today, Yesterday, Last 7 Days, Last 30 Days) or a custom date range. All summary cards and the calendar below respond to this filter.
+            </p>
+          </div>
+          <div className="border border-border rounded-lg p-4 bg-card">
+            <h3 className="text-sm font-semibold mb-2">Summary Cards</h3>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Five metric cards showing the current state of the download pipeline:
+            </p>
+            <ul className="text-xs text-muted-foreground mt-2 space-y-1 list-disc pl-4">
+              <li><span className="text-green-600 font-medium">Downloaded</span> — Recordings successfully downloaded to GCS</li>
+              <li><span className="text-yellow-600 font-medium">Pending</span> — Contact IDs in the staging queue awaiting download</li>
+              <li><span className="text-blue-600 font-medium">Processing</span> — Currently being downloaded by the processor</li>
+              <li><span className="text-red-600 font-medium">Failed</span> — Download attempts that encountered errors</li>
+              <li><strong>Total Contacts</strong> — Sum of all contacts across the filtered period</li>
+            </ul>
+          </div>
+          <div className="border border-border rounded-lg p-4 bg-card">
+            <h3 className="text-sm font-semibold mb-2">Calendar Heatmap</h3>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Monthly calendar grids showing daily contact counts. Each day is color-coded relative to the day-of-week average:
+            </p>
+            <ul className="text-xs text-muted-foreground mt-2 space-y-1 list-disc pl-4">
+              <li><span className="text-green-600 font-medium">Green</span> — Within 10% of average</li>
+              <li><span className="text-yellow-600 font-medium">Yellow</span> — 10-20% off average</li>
+              <li><span className="text-red-600 font-medium">Red</span> — Over 20% off average</li>
+            </ul>
+            <p className="text-xs text-muted-foreground mt-2">Day-of-week averages are displayed above the calendars so you can quickly spot anomalies.</p>
+          </div>
+        </div>
+      </div>
+    ),
+    staging: (
+      <div className="space-y-6">
+        <div>
+          <h2 className="text-lg font-semibold mb-2">Staging Queue</h2>
+          <p className="text-sm text-muted-foreground leading-relaxed">
+            The Staging Queue tab shows the individual rows in the <code className="bg-muted px-1 rounded">incontact.staging_call_queue</code> BigQuery table. This is the intermediate table that manages the download lifecycle for each call recording.
+          </p>
+        </div>
+        <div className="space-y-4">
+          <div className="border border-border rounded-lg p-4 bg-card">
+            <h3 className="text-sm font-semibold mb-2">Queue Table</h3>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Each row represents a single contact ID moving through the download process. Columns include:
+            </p>
+            <ul className="text-xs text-muted-foreground mt-2 space-y-1 list-disc pl-4">
+              <li><strong>Call ID</strong> — The NICE CXone contact ID</li>
+              <li><strong>Status</strong> — Current state: <code className="bg-muted px-1 rounded">pending</code>, <code className="bg-muted px-1 rounded">processing</code>, <code className="bg-muted px-1 rounded">downloaded</code>, or <code className="bg-muted px-1 rounded">failed</code></li>
+              <li><strong>Error Message</strong> — Details if the download failed</li>
+              <li><strong>Batch ID</strong> — Groups contacts loaded in the same batch</li>
+              <li><strong>Created At</strong> — When the contact was added to the queue</li>
+              <li><strong>Processed At</strong> — When processing completed (or failed)</li>
+            </ul>
+          </div>
+          <div className="border border-border rounded-lg p-4 bg-card">
+            <h3 className="text-sm font-semibold mb-2">Use Cases</h3>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Use this tab to troubleshoot download failures. If the Failed counter on the Monitor tab increases, switch to the Staging Queue to see the specific error messages for individual contacts. You can also manually add contact IDs to the queue for re-processing.
+            </p>
+          </div>
+        </div>
+      </div>
+    ),
+    recordings: (
+      <div className="space-y-6">
+        <div>
+          <h2 className="text-lg font-semibold mb-2">Recordings</h2>
+          <p className="text-sm text-muted-foreground leading-relaxed">
+            The Recordings tab is a searchable spreadsheet view of the <code className="bg-muted px-1 rounded">incontact.call_recordings</code> BigQuery table. It shows all successfully downloaded call recordings with inline playback.
+          </p>
+        </div>
+        <div className="space-y-4">
+          <div className="border border-border rounded-lg p-4 bg-card">
+            <h3 className="text-sm font-semibold mb-2">Search</h3>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Server-side search with debounced input. Search by contact ID, agent name, or file name. Results are paginated at 50 records per page with server-side offset/limit for efficient handling of large datasets.
+            </p>
+          </div>
+          <div className="border border-border rounded-lg p-4 bg-card">
+            <h3 className="text-sm font-semibold mb-2">Click-to-Play</h3>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Click any row in the table to play the recording. The audio is streamed directly from <code className="bg-muted px-1 rounded">gs://incontact-audio/</code> through the API server (no signed URLs required). The player supports seeking via HTTP range requests. You can also download the MP4 file directly from the player panel.
+            </p>
+          </div>
+          <div className="border border-border rounded-lg p-4 bg-card">
+            <h3 className="text-sm font-semibold mb-2">Table Columns</h3>
+            <ul className="text-xs text-muted-foreground space-y-1 list-disc pl-4">
+              <li><strong>Contact ID</strong> — The ACD contact ID (or fallback contact ID)</li>
+              <li><strong>Agent</strong> — Agent name who handled the call</li>
+              <li><strong>Date</strong> — When the call started</li>
+              <li><strong>Duration</strong> — Call length in minutes and seconds</li>
+              <li><strong>Direction</strong> — Inbound or outbound</li>
+              <li><strong>Size</strong> — File size of the MP4 recording</li>
+            </ul>
+          </div>
+          <div className="border border-border rounded-lg p-4 bg-card">
+            <h3 className="text-sm font-semibold mb-2">Storage</h3>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Recordings are stored as MP4 files at <code className="bg-muted px-1 rounded">gs://incontact-audio/&lt;contactId&gt;.mp4</code>. Metadata (agent, duration, timestamps, file size) is stored in the <code className="bg-muted px-1 rounded">incontact.call_recordings</code> BigQuery table. The join key between calls and recordings is <code className="bg-muted px-1 rounded">acd_contact_id</code>.
+            </p>
+          </div>
+        </div>
+      </div>
+    ),
+    "api-explorer": (
+      <div className="space-y-6">
+        <div>
+          <h2 className="text-lg font-semibold mb-2">API Explorer</h2>
+          <p className="text-sm text-muted-foreground leading-relaxed">
+            The API Explorer provides a structured interface for making authenticated requests to the NICE CXone API. It uses the same OAuth credentials stored in GCP Secret Manager that the pipeline uses.
+          </p>
+        </div>
+        <div className="space-y-4">
+          <div className="border border-border rounded-lg p-4 bg-card">
+            <h3 className="text-sm font-semibold mb-2">Endpoint Selection</h3>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              The left sidebar lists available endpoints organized by category (Contacts, Media, Workforce). Click an endpoint to see its description, full API path, and available parameters. Only allowlisted endpoints can be called for security.
+            </p>
+          </div>
+          <div className="border border-border rounded-lg p-4 bg-card">
+            <h3 className="text-sm font-semibold mb-2">Available Endpoints</h3>
+            <ul className="text-xs text-muted-foreground space-y-2 list-disc pl-4">
+              <li><strong>Completed Contacts</strong> — Retrieve call records for a date range with filtering and pagination</li>
+              <li><strong>Active Contacts</strong> — See currently active calls across all skills</li>
+              <li><strong>Media Playback</strong> — Get playback URLs for specific contact recordings</li>
+              <li><strong>Dispositions</strong> — List all disposition codes used to categorize call outcomes</li>
+              <li><strong>Agents</strong> — List agent profiles and status information</li>
+              <li><strong>Skills Summary</strong> — Queue counts and service level data by skill</li>
+            </ul>
+          </div>
+          <div className="border border-border rounded-lg p-4 bg-card">
+            <h3 className="text-sm font-semibold mb-2">Authentication</h3>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              The API server authenticates using an access key stored in GCP Secret Manager (<code className="bg-muted px-1 rounded">inContact-Client-Id</code> and <code className="bg-muted px-1 rounded">inContact-Client-Secret</code>). A Bearer token is obtained from <code className="bg-muted px-1 rounded">na1.nice-incontact.com</code> for each request. The connection status is shown in the page header.
+            </p>
+          </div>
+        </div>
+      </div>
+    ),
+    architecture: (
+      <div className="space-y-6">
+        <div>
+          <h2 className="text-lg font-semibold mb-2">Architecture</h2>
+          <p className="text-sm text-muted-foreground leading-relaxed">
+            The InContact pipeline runs on Google Cloud Platform within the <code className="bg-muted px-1 rounded">guidewaycare-476802</code> project.
+          </p>
+        </div>
+        <div className="space-y-4">
+          <div className="border border-border rounded-lg p-4 bg-card">
+            <h3 className="text-sm font-semibold mb-2">GCP Services</h3>
+            <ul className="text-xs text-muted-foreground space-y-2 list-disc pl-4">
+              <li><strong>Cloud Run (Services)</strong> — Hosts the API Server and Control Plane web app</li>
+              <li><strong>Cloud Run (Jobs)</strong> — <code className="bg-muted px-1 rounded">incontact-call-loader</code> and <code className="bg-muted px-1 rounded">incontact-call-processor</code> handle batch ingestion</li>
+              <li><strong>BigQuery</strong> — <code className="bg-muted px-1 rounded">raw</code> dataset (us-central1) for API responses; <code className="bg-muted px-1 rounded">incontact</code> dataset (US multi-region) for calls, staging queue, and recordings</li>
+              <li><strong>Cloud Storage</strong> — <code className="bg-muted px-1 rounded">gs://incontact-audio/</code> bucket stores MP4 recordings and the call_list.txt manifest</li>
+              <li><strong>Secret Manager</strong> — Stores NICE CXone API credentials</li>
+              <li><strong>Artifact Registry</strong> — Docker images for Cloud Run services and jobs</li>
+            </ul>
+          </div>
+          <div className="border border-border rounded-lg p-4 bg-card">
+            <h3 className="text-sm font-semibold mb-2">BigQuery Tables</h3>
+            <ul className="text-xs text-muted-foreground space-y-2 list-disc pl-4">
+              <li><code className="bg-muted px-1 rounded">raw.api_responses</code> — Raw JSON pages from the NICE API (us-central1)</li>
+              <li><code className="bg-muted px-1 rounded">incontact.calls</code> — Structured call records with all metadata (US multi-region)</li>
+              <li><code className="bg-muted px-1 rounded">incontact.staging_call_queue</code> — Download queue tracking each contact through the pipeline</li>
+              <li><code className="bg-muted px-1 rounded">incontact.call_recordings</code> — Metadata for downloaded recordings (join via <code className="bg-muted px-1 rounded">acd_contact_id</code>)</li>
+            </ul>
+          </div>
+          <div className="border border-border rounded-lg p-4 bg-card">
+            <h3 className="text-sm font-semibold mb-2">Deployment</h3>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              CI/CD is handled via GitHub Actions. On push to <code className="bg-muted px-1 rounded">main</code>, the CD workflow builds Docker images, pushes to Artifact Registry, and deploys to Cloud Run. The API Server and Control Plane are deployed as Cloud Run services. The processor Docker image is shared between the loader and processor Cloud Run jobs (differentiated by command override).
+            </p>
+          </div>
+          <div className="border border-border rounded-lg p-4 bg-card">
+            <h3 className="text-sm font-semibold mb-2">Service Account</h3>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              <code className="bg-muted px-1 rounded">api-controller-hub-dev@guidewaycare-476802.iam.gserviceaccount.com</code> — Used by all Cloud Run services and jobs. Has permissions for BigQuery, Cloud Storage, Secret Manager, and Cloud Run job execution. In production, authentication uses the GCP metadata server (no key files).
+            </p>
+          </div>
+        </div>
+      </div>
+    ),
+  };
+
+  return (
+    <div className="prose-sm max-w-none">
+      {content[section]}
     </div>
   );
 }

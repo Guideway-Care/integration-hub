@@ -18,11 +18,11 @@ import {
 import { useState } from "react";
 
 const navItems = [
+  { label: "InContact", href: "/incontact", icon: Phone },
   { label: "Dashboard", href: "/", icon: LayoutDashboard },
   { label: "Source Systems", href: "/source-systems", icon: Server },
   { label: "Endpoints", href: "/endpoints", icon: Plug },
   { label: "Runs", href: "/runs", icon: Play },
-  { label: "InContact", href: "/incontact", icon: Phone },
   { label: "Monitor", href: "/monitor", icon: BarChart3 },
   { label: "Audit Log", href: "/audit", icon: ClipboardList },
   { label: "Scripts", href: "/scripts", icon: Settings },
