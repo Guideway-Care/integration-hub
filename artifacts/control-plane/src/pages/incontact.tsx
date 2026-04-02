@@ -30,7 +30,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { MetricsSkeleton, TableSkeleton } from "@/components/table-skeleton";
 
-type Tab = "pipeline" | "staging" | "recordings" | "api-explorer";
+type Tab = "pipeline" | "monitor" | "staging" | "recordings" | "api-explorer";
 
 interface StagingSummary {
   pending: number;
@@ -618,6 +618,7 @@ export default function InContactPage() {
 
   const tabs: { id: Tab; label: string }[] = [
     { id: "pipeline", label: "Pipeline" },
+    { id: "monitor", label: "Monitor" },
     { id: "staging", label: "Staging Queue" },
     { id: "recordings", label: "Recordings" },
     { id: "api-explorer", label: "API Explorer" },
@@ -696,91 +697,6 @@ export default function InContactPage() {
 
       {tab === "pipeline" && (
         <div className="space-y-4">
-          <div className="flex flex-wrap items-center gap-2 border border-border rounded-lg p-3 bg-card">
-            <Filter className="w-4 h-4 text-muted-foreground shrink-0" />
-            <span className="text-sm font-medium text-muted-foreground shrink-0">Filter:</span>
-            {(["all", "today", "yesterday", "7d", "30d", "custom"] as const).map((preset) => {
-              const labels: Record<string, string> = { all: "All Time", today: "Today", yesterday: "Yesterday", "7d": "Last 7 Days", "30d": "Last 30 Days", custom: "Custom Range" };
-              return (
-                <button
-                  key={preset}
-                  onClick={() => setFilterPreset(preset)}
-                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                    filterPreset === preset
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-muted text-muted-foreground hover:bg-muted/80"
-                  }`}
-                >
-                  {labels[preset]}
-                </button>
-              );
-            })}
-            {filterPreset === "custom" && (
-              <>
-                <div className="flex items-center gap-1.5 ml-2">
-                  <Calendar className="w-3.5 h-3.5 text-muted-foreground" />
-                  <input
-                    type="date"
-                    value={filterStartDate}
-                    onChange={(e) => setFilterStartDate(e.target.value)}
-                    className="border border-input rounded-md px-2 py-1 text-xs bg-background"
-                  />
-                  <span className="text-xs text-muted-foreground">to</span>
-                  <input
-                    type="date"
-                    value={filterEndDate}
-                    onChange={(e) => setFilterEndDate(e.target.value)}
-                    className="border border-input rounded-md px-2 py-1 text-xs bg-background"
-                  />
-                </div>
-              </>
-            )}
-            {filterPreset !== "all" && (
-              <button
-                onClick={() => { setFilterPreset("all"); setFilterStartDate(""); setFilterEndDate(""); }}
-                className="ml-auto inline-flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
-              >
-                <X className="w-3 h-3" /> Clear
-              </button>
-            )}
-          </div>
-
-          {summaryLoading ? (
-            <MetricsSkeleton />
-          ) : (
-            <div className="grid gap-3 grid-cols-2 md:grid-cols-5 mb-2">
-              <div className="border border-border rounded-lg p-3 bg-card text-center">
-                <div className="text-2xl font-bold text-green-600">{summary?.downloaded?.toLocaleString() ?? "—"}</div>
-                <div className="text-xs text-muted-foreground">Downloaded</div>
-              </div>
-              <div className="border border-border rounded-lg p-3 bg-card text-center">
-                <div className="text-2xl font-bold text-yellow-600">{summary?.pending?.toLocaleString() ?? "—"}</div>
-                <div className="text-xs text-muted-foreground">Pending</div>
-              </div>
-              <div className="border border-border rounded-lg p-3 bg-card text-center">
-                <div className="text-2xl font-bold text-blue-600">{summary?.processing?.toLocaleString() ?? "—"}</div>
-                <div className="text-xs text-muted-foreground">Processing</div>
-              </div>
-              <div className="border border-border rounded-lg p-3 bg-card text-center">
-                <div className="text-2xl font-bold text-red-600">{summary?.failed?.toLocaleString() ?? "—"}</div>
-                <div className="text-xs text-muted-foreground">Failed</div>
-              </div>
-              <div className="border border-border rounded-lg p-3 bg-card text-center">
-                <div className="text-2xl font-bold">{totalContacts.toLocaleString()}</div>
-                <div className="text-xs text-muted-foreground">Total Contacts</div>
-              </div>
-            </div>
-          )}
-
-          {!monitorLoading && monitorRows.length > 0 && (
-            <ContactCalendar rows={monitorRows} />
-          )}
-
-          <div className="flex items-center gap-2 py-2">
-            <div className="flex-1 h-px bg-border" />
-            <span className="text-xs text-muted-foreground font-medium">Pipeline Steps</span>
-            <div className="flex-1 h-px bg-border" />
-          </div>
 
           <PipelineStep
             number={1}
@@ -1024,6 +940,94 @@ export default function InContactPage() {
               </div>
             </div>
           </PipelineStep>
+        </div>
+      )}
+
+      {tab === "monitor" && (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center gap-2 border border-border rounded-lg p-3 bg-card">
+            <Filter className="w-4 h-4 text-muted-foreground shrink-0" />
+            <span className="text-sm font-medium text-muted-foreground shrink-0">Filter:</span>
+            {(["all", "today", "yesterday", "7d", "30d", "custom"] as const).map((preset) => {
+              const labels: Record<string, string> = { all: "All Time", today: "Today", yesterday: "Yesterday", "7d": "Last 7 Days", "30d": "Last 30 Days", custom: "Custom Range" };
+              return (
+                <button
+                  key={preset}
+                  onClick={() => setFilterPreset(preset)}
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                    filterPreset === preset
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted text-muted-foreground hover:bg-muted/80"
+                  }`}
+                >
+                  {labels[preset]}
+                </button>
+              );
+            })}
+            {filterPreset === "custom" && (
+              <>
+                <div className="flex items-center gap-1.5 ml-2">
+                  <Calendar className="w-3.5 h-3.5 text-muted-foreground" />
+                  <input
+                    type="date"
+                    value={filterStartDate}
+                    onChange={(e) => setFilterStartDate(e.target.value)}
+                    className="border border-input rounded-md px-2 py-1 text-xs bg-background"
+                  />
+                  <span className="text-xs text-muted-foreground">to</span>
+                  <input
+                    type="date"
+                    value={filterEndDate}
+                    onChange={(e) => setFilterEndDate(e.target.value)}
+                    className="border border-input rounded-md px-2 py-1 text-xs bg-background"
+                  />
+                </div>
+              </>
+            )}
+            {filterPreset !== "all" && (
+              <button
+                onClick={() => { setFilterPreset("all"); setFilterStartDate(""); setFilterEndDate(""); }}
+                className="ml-auto inline-flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+              >
+                <X className="w-3 h-3" /> Clear
+              </button>
+            )}
+          </div>
+
+          {summaryLoading ? (
+            <MetricsSkeleton />
+          ) : (
+            <div className="grid gap-3 grid-cols-2 md:grid-cols-5 mb-2">
+              <div className="border border-border rounded-lg p-3 bg-card text-center">
+                <div className="text-2xl font-bold text-green-600">{summary?.downloaded?.toLocaleString() ?? "—"}</div>
+                <div className="text-xs text-muted-foreground">Downloaded</div>
+              </div>
+              <div className="border border-border rounded-lg p-3 bg-card text-center">
+                <div className="text-2xl font-bold text-yellow-600">{summary?.pending?.toLocaleString() ?? "—"}</div>
+                <div className="text-xs text-muted-foreground">Pending</div>
+              </div>
+              <div className="border border-border rounded-lg p-3 bg-card text-center">
+                <div className="text-2xl font-bold text-blue-600">{summary?.processing?.toLocaleString() ?? "—"}</div>
+                <div className="text-xs text-muted-foreground">Processing</div>
+              </div>
+              <div className="border border-border rounded-lg p-3 bg-card text-center">
+                <div className="text-2xl font-bold text-red-600">{summary?.failed?.toLocaleString() ?? "—"}</div>
+                <div className="text-xs text-muted-foreground">Failed</div>
+              </div>
+              <div className="border border-border rounded-lg p-3 bg-card text-center">
+                <div className="text-2xl font-bold">{totalContacts.toLocaleString()}</div>
+                <div className="text-xs text-muted-foreground">Total Contacts</div>
+              </div>
+            </div>
+          )}
+
+          {monitorLoading ? (
+            <MetricsSkeleton />
+          ) : monitorRows.length > 0 ? (
+            <ContactCalendar rows={monitorRows} />
+          ) : (
+            <div className="text-center py-8 text-sm text-muted-foreground">No contact data available for the selected period.</div>
+          )}
         </div>
       )}
 
