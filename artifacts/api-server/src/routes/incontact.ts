@@ -218,4 +218,78 @@ router.post("/incontact/fetch", async (req, res) => {
   }
 });
 
+router.post("/incontact/sync-dispositions", async (_req, res) => {
+  try {
+    const { token, resourceServerBaseUri } = await getInContactBearerToken();
+    const bq = getBigQueryClient();
+
+    let allDispositions: any[] = [];
+    let skip = 0;
+    const top = 1000;
+    let hasMore = true;
+
+    while (hasMore) {
+      const url = new URL(`${resourceServerBaseUri}/incontactapi/services/v30.0/dispositions`);
+      url.searchParams.set("skip", String(skip));
+      url.searchParams.set("top", String(top));
+
+      const apiResponse = await fetch(url.toString(), {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json",
+        },
+      });
+
+      if (!apiResponse.ok) {
+        const errText = await apiResponse.text();
+        throw new Error(`API request failed (${apiResponse.status}): ${errText}`);
+      }
+
+      const data = await apiResponse.json() as any;
+      const dispositions = data.resultSet?.dispositions || data.dispositions || [];
+      allDispositions = allDispositions.concat(dispositions);
+
+      if (dispositions.length < top) {
+        hasMore = false;
+      } else {
+        skip += top;
+      }
+    }
+
+    if (allDispositions.length === 0) {
+      res.json({ synced: 0, message: "No dispositions returned from API" });
+      return;
+    }
+
+    const rows = allDispositions.map((d: any) => ({
+      disposition_id: d.dispositionId ?? null,
+      disposition_name: d.dispositionName ?? null,
+      notes: d.notes ?? null,
+      last_updated: d.lastUpdated ? new Date(d.lastUpdated).getTime() : null,
+      classification_id: d.classificationId ?? null,
+      system_outcome: d.systemOutcome ?? null,
+      is_active: d.isActive ?? null,
+      is_preview_disposition: d.isPreviewDisposition ?? null,
+    }));
+
+    const dataset = bq.dataset("incontact");
+    const table = dataset.table("dispositions");
+
+    await bq.query({
+      query: "DELETE FROM `incontact.dispositions` WHERE TRUE",
+      location: "US",
+    });
+
+    await table.insert(rows, { skipInvalidRows: false, ignoreUnknownValues: false });
+
+    res.json({
+      synced: rows.length,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    console.error("[incontact/sync-dispositions]", err.message);
+    res.status(500).json({ error: err.message || "Failed to sync dispositions" });
+  }
+});
+
 export default router;

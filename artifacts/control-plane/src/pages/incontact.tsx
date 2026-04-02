@@ -643,6 +643,16 @@ export default function InContactPage() {
     },
   });
 
+  const syncDispositionsMutation = useMutation({
+    mutationFn: () => api.post<any>("/incontact/sync-dispositions", {}),
+    onSuccess: (data) => {
+      toast({ title: "Dispositions synced", description: `${(data as any).synced} dispositions written to BigQuery` });
+    },
+    onError: (err) => {
+      toast({ title: "Sync failed", description: (err as Error).message, variant: "destructive" });
+    },
+  });
+
   const monitorRows = monitorData?.data ?? [];
   const totalContacts = monitorRows.reduce((a, b) => a + b.contact_count, 0);
 
@@ -1428,6 +1438,16 @@ export default function InContactPage() {
                     >
                       <RotateCcw className="w-3 h-3" /> Clear
                     </button>
+                    {selectedEndpointDef?.name === "Dispositions" && (
+                      <button
+                        onClick={() => syncDispositionsMutation.mutate()}
+                        disabled={syncDispositionsMutation.isPending}
+                        className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-md text-sm font-medium hover:bg-green-700 disabled:opacity-50 ml-auto"
+                      >
+                        {syncDispositionsMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                        {syncDispositionsMutation.isPending ? "Syncing..." : "Sync to BigQuery"}
+                      </button>
+                    )}
                   </div>
                 </div>
 
