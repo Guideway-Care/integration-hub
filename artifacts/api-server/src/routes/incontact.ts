@@ -2,13 +2,91 @@ import { Router, type IRouter } from "express";
 import { z } from "zod";
 import { getGcpSecretManagerClient, getSecretValue } from "../services/gcp-clients";
 
-const ALLOWED_ENDPOINTS = [
-  "/media-playback/v1/contacts",
-  "/incontactapi/services/v30.0/contacts/completed",
-  "/incontactapi/services/v30.0/contacts/active",
-  "/incontactapi/services/v30.0/agents",
-  "/incontactapi/services/v30.0/skills/summary",
+interface EndpointParam {
+  name: string;
+  label: string;
+  type: "string" | "date" | "number" | "boolean";
+  required?: boolean;
+  placeholder?: string;
+  defaultValue?: string;
+  description?: string;
+}
+
+interface EndpointDef {
+  path: string;
+  name: string;
+  description: string;
+  method: "GET" | "POST";
+  category: string;
+  params: EndpointParam[];
+}
+
+const ENDPOINT_DEFS: EndpointDef[] = [
+  {
+    path: "/incontactapi/services/v30.0/contacts/completed",
+    name: "Completed Contacts",
+    description: "Retrieve completed contact records for a given date range. Returns call metadata including agents, dispositions, and duration.",
+    method: "GET",
+    category: "Contacts",
+    params: [
+      { name: "startDate", label: "Start Date", type: "date", required: true, placeholder: "2026-04-01", description: "Start of date range (YYYY-MM-DD)" },
+      { name: "endDate", label: "End Date", type: "date", required: true, placeholder: "2026-04-01", description: "End of date range (YYYY-MM-DD)" },
+      { name: "updatedSince", label: "Updated Since", type: "string", placeholder: "2026-04-01T00:00:00Z", description: "Only return records updated after this timestamp" },
+      { name: "fields", label: "Fields", type: "string", placeholder: "contactId,agentId,teamName", description: "Comma-separated list of fields to return" },
+      { name: "skip", label: "Skip", type: "number", placeholder: "0", description: "Number of records to skip (pagination)" },
+      { name: "top", label: "Top", type: "number", placeholder: "1000", description: "Max records to return (default 1000)" },
+      { name: "orderBy", label: "Order By", type: "string", placeholder: "lastUpdateTime desc", description: "Field and direction to sort by" },
+    ],
+  },
+  {
+    path: "/incontactapi/services/v30.0/contacts/active",
+    name: "Active Contacts",
+    description: "Retrieve currently active contacts across all skills and agents.",
+    method: "GET",
+    category: "Contacts",
+    params: [
+      { name: "updatedSince", label: "Updated Since", type: "string", placeholder: "2026-04-01T00:00:00Z", description: "Only return records updated after this timestamp" },
+      { name: "fields", label: "Fields", type: "string", placeholder: "contactId,agentId", description: "Comma-separated list of fields to return" },
+      { name: "skip", label: "Skip", type: "number", placeholder: "0" },
+      { name: "top", label: "Top", type: "number", placeholder: "1000" },
+    ],
+  },
+  {
+    path: "/media-playback/v1/contacts",
+    name: "Media Playback",
+    description: "Retrieve media playback URLs for call recordings by contact ID.",
+    method: "GET",
+    category: "Media",
+    params: [
+      { name: "contactId", label: "Contact ID", type: "string", required: true, placeholder: "698822631732", description: "The numeric contact ID to retrieve media for" },
+    ],
+  },
+  {
+    path: "/incontactapi/services/v30.0/agents",
+    name: "Agents",
+    description: "List all agents configured in the NICE CXone system with their profiles and status.",
+    method: "GET",
+    category: "Workforce",
+    params: [
+      { name: "updatedSince", label: "Updated Since", type: "string", placeholder: "2026-04-01T00:00:00Z", description: "Only return agents updated after this timestamp" },
+      { name: "fields", label: "Fields", type: "string", placeholder: "agentId,firstName,lastName", description: "Comma-separated list of fields to return" },
+      { name: "skip", label: "Skip", type: "number", placeholder: "0" },
+      { name: "top", label: "Top", type: "number", placeholder: "100" },
+    ],
+  },
+  {
+    path: "/incontactapi/services/v30.0/skills/summary",
+    name: "Skills Summary",
+    description: "Get a summary of all configured skills including queue counts and service level data.",
+    method: "GET",
+    category: "Workforce",
+    params: [
+      { name: "fields", label: "Fields", type: "string", placeholder: "skillId,skillName,contactsQueued", description: "Comma-separated list of fields to return" },
+    ],
+  },
 ];
+
+const ALLOWED_ENDPOINTS = ENDPOINT_DEFS.map((e) => e.path);
 
 const fetchBodySchema = z.object({
   endpoint: z.string().refine((val) => ALLOWED_ENDPOINTS.includes(val), {
@@ -60,7 +138,7 @@ router.get("/incontact/test", async (_req, res) => {
 });
 
 router.get("/incontact/endpoints", (_req, res) => {
-  res.json(ALLOWED_ENDPOINTS);
+  res.json(ENDPOINT_DEFS);
 });
 
 router.post("/incontact/auth-test", async (_req, res) => {

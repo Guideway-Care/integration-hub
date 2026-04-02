@@ -300,8 +300,8 @@ export default function InContactPage() {
   const [playbackUrl, setPlaybackUrl] = useState<string | null>(null);
   const [playbackLoading, setPlaybackLoading] = useState(false);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
-  const [apiEndpoint, setApiEndpoint] = useState("/media-playback/v1/contacts");
-  const [apiParams, setApiParams] = useState("");
+  const [apiEndpoint, setApiEndpoint] = useState("");
+  const [apiParamValues, setApiParamValues] = useState<Record<string, string>>({});
   const [fetchResult, setFetchResult] = useState<any>(null);
   const [contactDateRange, setContactDateRange] = useState(() => {
     const yesterday = new Date();
@@ -430,11 +430,31 @@ export default function InContactPage() {
     retry: false,
   });
 
-  const { data: endpointsData } = useQuery({
+  interface EndpointParam {
+    name: string;
+    label: string;
+    type: "string" | "date" | "number" | "boolean";
+    required?: boolean;
+    placeholder?: string;
+    defaultValue?: string;
+    description?: string;
+  }
+  interface EndpointDef {
+    path: string;
+    name: string;
+    description: string;
+    method: "GET" | "POST";
+    category: string;
+    params: EndpointParam[];
+  }
+
+  const { data: endpointDefs } = useQuery({
     queryKey: ["incontact-endpoints"],
-    queryFn: () => api.get<string[]>("/incontact/endpoints"),
+    queryFn: () => api.get<EndpointDef[]>("/incontact/endpoints"),
     enabled: tab === "api-explorer",
   });
+
+  const selectedEndpointDef = (endpointDefs ?? []).find((e) => e.path === apiEndpoint) ?? null;
 
   interface LastExtraction {
     runId: string;
@@ -607,16 +627,11 @@ export default function InContactPage() {
 
   const fetchApiMutation = useMutation({
     mutationFn: () => {
-      let parsedParams: Record<string, string> = {};
-      if (apiParams.trim()) {
-        try {
-          parsedParams = JSON.parse(apiParams);
-        } catch {
-          const entries = apiParams.split("&").map((p) => p.split("="));
-          parsedParams = Object.fromEntries(entries);
-        }
-      }
-      return api.post<any>("/incontact/fetch", { endpoint: apiEndpoint, params: parsedParams });
+      const params: Record<string, string> = {};
+      Object.entries(apiParamValues).forEach(([k, v]) => {
+        if (v.trim()) params[k] = v.trim();
+      });
+      return api.post<any>("/incontact/fetch", { endpoint: apiEndpoint, params });
     },
     onSuccess: (data) => {
       setFetchResult(data);
@@ -1323,89 +1338,119 @@ export default function InContactPage() {
       )}
 
       {tab === "api-explorer" && (
-        <div className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="border border-border rounded-lg p-4 bg-card">
-              <h3 className="text-sm font-semibold mb-3">Secret Manager</h3>
-              {testQuery.isLoading ? (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Loader2 className="w-4 h-4 animate-spin" /> Checking...
-                </div>
-              ) : testQuery.data?.status === "connected" ? (
-                <div className="flex items-center gap-2 text-sm text-green-600">
-                  <CheckCircle className="w-4 h-4" /> Connected to Secret Manager
-                </div>
-              ) : (
-                <div className="flex items-center gap-2 text-sm text-destructive">
-                  <XCircle className="w-4 h-4" /> Not connected
-                </div>
-              )}
-              <p className="text-xs text-muted-foreground mt-2">
-                Project: {testQuery.data?.project || "guidewaycare-476802"}
-              </p>
-            </div>
-
-            <div className="border border-border rounded-lg p-4 bg-card">
-              <h3 className="text-sm font-semibold mb-3">OAuth Token</h3>
-              <button
-                onClick={() => authTestMutation.mutate()}
-                disabled={authTestMutation.isPending}
-                className="inline-flex items-center gap-2 px-3 py-1.5 bg-primary text-primary-foreground rounded-md text-xs font-medium hover:opacity-90 disabled:opacity-50"
-              >
-                {authTestMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Phone className="w-3 h-3" />}
-                Test Authentication
-              </button>
-            </div>
-          </div>
-
-          <div className="border border-border rounded-lg p-6 bg-card">
-            <h3 className="text-sm font-semibold mb-4">API Explorer</h3>
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs font-medium mb-1">Endpoint</label>
-                <select
-                  value={apiEndpoint}
-                  onChange={(e) => setApiEndpoint(e.target.value)}
-                  className="w-full px-3 py-2 border border-input rounded-md text-sm bg-background"
-                >
-                  {(endpointsData ?? []).map((ep) => (
-                    <option key={ep} value={ep}>{ep}</option>
+        <div className="flex gap-4">
+          <div className="w-72 shrink-0 space-y-2">
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide px-1">Endpoints</h3>
+            {(() => {
+              const defs = endpointDefs ?? [];
+              const categories = [...new Set(defs.map((e) => e.category))];
+              return categories.map((cat) => (
+                <div key={cat}>
+                  <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider px-3 py-1.5">{cat}</div>
+                  {defs.filter((e) => e.category === cat).map((ep) => (
+                    <button
+                      key={ep.path}
+                      onClick={() => { setApiEndpoint(ep.path); setApiParamValues({}); setFetchResult(null); }}
+                      className={`w-full text-left px-3 py-2.5 rounded-md text-sm transition-colors ${
+                        apiEndpoint === ep.path
+                          ? "bg-primary/10 text-primary border border-primary/20"
+                          : "hover:bg-muted text-foreground"
+                      }`}
+                    >
+                      <div className="font-medium text-xs">{ep.name}</div>
+                      <div className="text-[10px] text-muted-foreground mt-0.5 truncate">{ep.method} {ep.path.split("/").slice(-2).join("/")}</div>
+                    </button>
                   ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-medium mb-1">Parameters (JSON or key=value&key=value)</label>
-                <input
-                  value={apiParams}
-                  onChange={(e) => setApiParams(e.target.value)}
-                  placeholder='e.g. {"startDate": "2026-03-30", "endDate": "2026-03-30"}'
-                  className="w-full px-3 py-2 border border-input rounded-md text-sm bg-background"
-                />
-              </div>
-              <button
-                onClick={() => fetchApiMutation.mutate()}
-                disabled={fetchApiMutation.isPending}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:opacity-90 disabled:opacity-50"
-              >
-                {fetchApiMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                Send Request
-              </button>
-            </div>
+                </div>
+              ));
+            })()}
           </div>
 
-          {fetchResult && (
-            <div className="border border-border rounded-lg p-4 bg-card">
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="text-sm font-semibold">Response</h3>
-                <span className={`text-xs font-medium ${fetchResult.statusCode < 400 ? "text-green-600" : "text-destructive"}`}>
-                  {fetchResult.statusCode} {fetchResult.statusText}
-                </span>
+          <div className="flex-1 min-w-0 space-y-4">
+            {!selectedEndpointDef ? (
+              <div className="text-center py-16 border border-dashed border-border rounded-lg">
+                <Database className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
+                <p className="text-muted-foreground text-sm">Select an endpoint from the list to get started</p>
               </div>
-              <pre className="text-xs bg-muted p-3 rounded-md overflow-auto max-h-96 whitespace-pre-wrap">
-                {JSON.stringify(fetchResult.data, null, 2)}
-              </pre>
-            </div>
-          )}
+            ) : (
+              <>
+                <div className="border border-border rounded-lg p-4 bg-card">
+                  <div className="flex items-center justify-between mb-2">
+                    <div>
+                      <h3 className="text-base font-semibold">{selectedEndpointDef.name}</h3>
+                      <p className="text-xs text-muted-foreground mt-0.5">{selectedEndpointDef.description}</p>
+                    </div>
+                    <span className="text-[10px] font-mono bg-muted px-2 py-1 rounded">{selectedEndpointDef.method}</span>
+                  </div>
+                  <div className="mt-1 text-xs font-mono text-muted-foreground bg-muted/50 px-3 py-1.5 rounded truncate">
+                    {selectedEndpointDef.path}
+                  </div>
+                </div>
+
+                <div className="border border-border rounded-lg p-4 bg-card">
+                  <h4 className="text-sm font-semibold mb-3">Parameters</h4>
+                  {selectedEndpointDef.params.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">This endpoint has no parameters.</p>
+                  ) : (
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {selectedEndpointDef.params.map((p) => (
+                        <div key={p.name}>
+                          <label className="flex items-center gap-1 text-xs font-medium mb-1">
+                            {p.label}
+                            {p.required && <span className="text-red-500">*</span>}
+                          </label>
+                          <input
+                            type={p.type === "date" ? "date" : p.type === "number" ? "number" : "text"}
+                            value={apiParamValues[p.name] ?? ""}
+                            onChange={(e) => setApiParamValues((prev) => ({ ...prev, [p.name]: e.target.value }))}
+                            placeholder={p.placeholder}
+                            className="w-full px-3 py-1.5 border border-input rounded-md text-sm bg-background"
+                          />
+                          {p.description && <p className="text-[10px] text-muted-foreground mt-0.5">{p.description}</p>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex items-center gap-2 mt-4">
+                    <button
+                      onClick={() => fetchApiMutation.mutate()}
+                      disabled={fetchApiMutation.isPending || !apiEndpoint}
+                      className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:opacity-90 disabled:opacity-50"
+                    >
+                      {fetchApiMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                      Send Request
+                    </button>
+                    <button
+                      onClick={() => { setApiParamValues({}); setFetchResult(null); }}
+                      className="inline-flex items-center gap-1.5 px-3 py-2 border border-border rounded-md text-xs hover:bg-muted"
+                    >
+                      <RotateCcw className="w-3 h-3" /> Clear
+                    </button>
+                  </div>
+                </div>
+
+                {fetchResult && (
+                  <div className="border border-border rounded-lg bg-card">
+                    <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+                      <h4 className="text-sm font-semibold">Response</h4>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground">{fetchResult.timestamp ? new Date(fetchResult.timestamp).toLocaleTimeString() : ""}</span>
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${
+                          fetchResult.statusCode < 400 ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
+                        }`}>
+                          {fetchResult.statusCode < 400 ? <CheckCircle className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
+                          {fetchResult.statusCode} {fetchResult.statusText}
+                        </span>
+                      </div>
+                    </div>
+                    <pre className="text-xs p-4 overflow-auto max-h-[500px] whitespace-pre-wrap font-mono">
+                      {JSON.stringify(fetchResult.data, null, 2)}
+                    </pre>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         </div>
       )}
     </div>
