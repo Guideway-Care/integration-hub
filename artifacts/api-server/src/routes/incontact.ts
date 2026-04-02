@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { z } from "zod";
-import { getGcpSecretManagerClient, getSecretValue } from "../services/gcp-clients";
+import { getGcpSecretManagerClient, getSecretValue, getBigQueryClient } from "../services/gcp-clients";
 
 interface EndpointParam {
   name: string;
