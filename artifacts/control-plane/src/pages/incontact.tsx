@@ -826,6 +826,34 @@ export default function InContactPage() {
     },
   });
 
+  const agentsTransformMutation = useMutation({
+    mutationFn: () => api.post<any>("/bq/transform-agents"),
+    onSuccess: () => {
+      toast({ title: "Agents transform started", description: "Extracting agent performance from raw data into agent_activity table" });
+      queryClient.invalidateQueries({ queryKey: ["agents-transform-job-status"] });
+      queryClient.invalidateQueries({ queryKey: ["agents-transform-status"] });
+    },
+    onError: (err) => {
+      toast({ title: "Transform failed to start", description: (err as Error).message, variant: "destructive" });
+    },
+  });
+
+  const { data: agentsTransformJobStatus } = useQuery({
+    queryKey: ["agents-transform-job-status"],
+    queryFn: () => api.get<any>("/bq/transform-agents-job-status"),
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === "running" ? 2000 : false;
+    },
+  });
+
+  const { data: agentsTransformStatus } = useQuery({
+    queryKey: ["agents-transform-status"],
+    queryFn: () => api.get<any>("/bq/transform-agents-status"),
+  });
+
+  const isAgentsTransformRunning = agentsTransformJobStatus?.status === "running";
+
   const previewAgentsMutation = useMutation({
     mutationFn: () => {
       const startDate = `${agentDateRange.startDate}T00:00:00Z`;
@@ -1311,36 +1339,48 @@ export default function InContactPage() {
 
               <PipelineStep
                 number={2}
-                title="Preview Results"
-                description="Load agent performance data from the API for review (does not store to BigQuery)"
-                status={previewAgentsMutation.isPending ? "running" : agentData ? "success" : "idle"}
-                onRun={() => previewAgentsMutation.mutate()}
-                isRunning={previewAgentsMutation.isPending}
+                title="Transform to Agent Activity"
+                description="Extract agent performance from raw api_payload into incontact.agent_activity table. Processes all successful payloads, deduplicates by agent ID + date window."
+                status={
+                  isAgentsTransformRunning ? "running" :
+                  agentsTransformJobStatus?.status === "completed" ? "success" :
+                  agentsTransformJobStatus?.status === "failed" ? "error" :
+                  "idle"
+                }
+                onRun={() => agentsTransformMutation.mutate()}
+                isRunning={isAgentsTransformRunning || agentsTransformMutation.isPending}
               >
-                {agentData && agentSummary && (
-                  <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                {agentsTransformStatus && (
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
                     <div className="text-center p-3 bg-muted/50 rounded-lg">
-                      <div className="text-2xl font-bold text-foreground">{agentSummary.total}</div>
-                      <div className="text-xs text-muted-foreground">Total Agents</div>
+                      <div className="text-2xl font-bold text-foreground">{agentsTransformStatus.rawPagesCount}</div>
+                      <div className="text-xs text-muted-foreground">Raw Pages</div>
                     </div>
                     <div className="text-center p-3 bg-muted/50 rounded-lg">
-                      <div className="text-2xl font-bold text-green-600">{agentSummary.active}</div>
-                      <div className="text-xs text-muted-foreground">Active Agents</div>
+                      <div className="text-2xl font-bold text-blue-600">{agentsTransformStatus.agentActivityCount}</div>
+                      <div className="text-xs text-muted-foreground">Agent Activity Rows</div>
                     </div>
                     <div className="text-center p-3 bg-muted/50 rounded-lg">
-                      <div className="text-2xl font-bold text-blue-600">{agentSummary.totalCalls.toLocaleString()}</div>
-                      <div className="text-xs text-muted-foreground">Total Calls</div>
+                      <div className="text-xs font-bold text-muted-foreground">{agentsTransformStatus.lastIngested ? new Date(agentsTransformStatus.lastIngested).toLocaleString() : "—"}</div>
+                      <div className="text-xs text-muted-foreground">Last Ingested</div>
                     </div>
-                    <div className="text-center p-3 bg-muted/50 rounded-lg">
-                      <div className="text-2xl font-bold text-purple-600">
-                        {Math.floor(agentSummary.totalTalkSeconds / 3600)}h {Math.floor((agentSummary.totalTalkSeconds % 3600) / 60)}m
-                      </div>
-                      <div className="text-xs text-muted-foreground">Total Talk Time</div>
-                    </div>
-                    <div className="text-center p-3 bg-muted/50 rounded-lg">
-                      <div className="text-2xl font-bold text-orange-600">{agentSummary.avgOccupancy.toFixed(1)}%</div>
-                      <div className="text-xs text-muted-foreground">Avg Occupancy</div>
-                    </div>
+                  </div>
+                )}
+                {isAgentsTransformRunning && agentsTransformJobStatus?.step && (
+                  <div className="flex items-center gap-2 p-2 bg-blue-50 border border-blue-200 rounded text-sm text-blue-700">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    {agentsTransformJobStatus.step}
+                  </div>
+                )}
+                {agentsTransformJobStatus?.status === "completed" && (
+                  <div className="p-2 bg-green-50 border border-green-200 rounded text-sm text-green-700">
+                    Completed in {agentsTransformJobStatus.durationFormatted}
+                    {agentsTransformJobStatus.rowsProcessed && ` — ${agentsTransformJobStatus.rowsProcessed} rows`}
+                  </div>
+                )}
+                {agentsTransformJobStatus?.status === "failed" && (
+                  <div className="p-2 bg-red-50 border border-red-200 rounded text-sm text-red-700">
+                    Failed: {agentsTransformJobStatus.error}
                   </div>
                 )}
               </PipelineStep>

@@ -386,6 +386,7 @@ async function runTransformPipeline() {
           END
         ) AS contact
         WHERE (p.page_status = 'SUCCESS' OR p.http_status_code = 200)
+          AND p.endpoint_id IN ('nice-cxone-contacts', 'incontact-completed-contacts')
       )
       SELECT * EXCEPT(rn) FROM extracted WHERE rn = 1
     `;
@@ -509,12 +510,12 @@ router.get("/bq/transform-status", async (_req, res) => {
     const callsCount = Number(callsRows[0]?.count || 0);
 
     const [rawRows] = await bqRegional.query({
-      query: `SELECT COUNT(*) as count FROM \`${projectId}.raw.api_payload\` WHERE (page_status = 'SUCCESS' OR http_status_code = 200)`,
+      query: `SELECT COUNT(*) as count FROM \`${projectId}.raw.api_payload\` WHERE (page_status = 'SUCCESS' OR http_status_code = 200) AND endpoint_id IN ('nice-cxone-contacts', 'incontact-completed-contacts')`,
     });
     const rawPagesCount = Number(rawRows[0]?.count || 0);
 
     const [latestRow] = await bqRegional.query({
-      query: `SELECT MAX(ingested_ts) as last_ingested FROM \`${projectId}.raw.api_payload\` WHERE (page_status = 'SUCCESS' OR http_status_code = 200)`,
+      query: `SELECT MAX(ingested_ts) as last_ingested FROM \`${projectId}.raw.api_payload\` WHERE (page_status = 'SUCCESS' OR http_status_code = 200) AND endpoint_id IN ('nice-cxone-contacts', 'incontact-completed-contacts')`,
     });
     const lastIngested = latestRow[0]?.last_ingested?.value || null;
 
@@ -543,6 +544,195 @@ router.get("/bq/transform-status", async (_req, res) => {
     });
   } catch (err: any) {
     console.error("[bq/transform-status]", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+let agentsTransformJob: {
+  status: "idle" | "running" | "completed" | "failed";
+  step: string;
+  startedAt?: string;
+  completedAt?: string;
+  durationMs?: number;
+  durationFormatted?: string;
+  rowsProcessed?: string | null;
+  error?: string;
+} = { status: "idle", step: "" };
+
+async function runAgentsTransformPipeline() {
+  const projectId = getGcpProjectId();
+  const bqRegional = getBigQueryClient("us-central1");
+  const bqUS = getBigQueryClient("US");
+  const gcs = getGCSClient();
+  const gcsBucket = "incontact-audio";
+  const gcsPrefix = "agents-transform-staging";
+  const startTime = Date.now();
+
+  try {
+    agentsTransformJob.step = "Step 1/3: Extracting agent performance from raw data...";
+    console.log("[agents-transform] Step 1: Extract from raw.api_payload → raw.agents_extracted (us-central1)");
+    const step1Query = `
+      CREATE OR REPLACE TABLE \`${projectId}.raw.agents_extracted\` AS
+      WITH extracted AS (
+        SELECT
+          CAST(JSON_VALUE(agent, '$.agentId') AS INT64) AS agent_id,
+          CAST(JSON_VALUE(agent, '$.teamId') AS INT64) AS team_id,
+          CAST(JSON_VALUE(agent, '$.agentOffered') AS INT64) AS agent_offered,
+          CAST(JSON_VALUE(agent, '$.inboundHandled') AS INT64) AS inbound_handled,
+          JSON_VALUE(agent, '$.inboundTime') AS inbound_time,
+          JSON_VALUE(agent, '$.inboundTalkTime') AS inbound_talk_time,
+          JSON_VALUE(agent, '$.inboundAvgTalkTime') AS inbound_avg_talk_time,
+          CAST(JSON_VALUE(agent, '$.outboundHandled') AS INT64) AS outbound_handled,
+          JSON_VALUE(agent, '$.outboundTime') AS outbound_time,
+          JSON_VALUE(agent, '$.outboundTalkTime') AS outbound_talk_time,
+          JSON_VALUE(agent, '$.outboundAvgTalkTime') AS outbound_avg_talk_time,
+          CAST(JSON_VALUE(agent, '$.totalHandled') AS INT64) AS total_handled,
+          JSON_VALUE(agent, '$.totalTalkTime') AS total_talk_time,
+          JSON_VALUE(agent, '$.totalAvgTalkTime') AS total_avg_talk_time,
+          JSON_VALUE(agent, '$.totalAvgHandleTime') AS total_avg_handle_time,
+          JSON_VALUE(agent, '$.consultTime') AS consult_time,
+          JSON_VALUE(agent, '$.availableTime') AS available_time,
+          JSON_VALUE(agent, '$.unavailableTime') AS unavailable_time,
+          JSON_VALUE(agent, '$.acwTime') AS acw_time,
+          CAST(JSON_VALUE(agent, '$.refused') AS INT64) AS refused,
+          CAST(JSON_VALUE(agent, '$.percentRefused') AS FLOAT64) AS percent_refused,
+          JSON_VALUE(agent, '$.loginTime') AS login_time,
+          CAST(JSON_VALUE(agent, '$.workingRate') AS FLOAT64) AS working_rate,
+          CAST(JSON_VALUE(agent, '$.occupancy') AS FLOAT64) AS occupancy,
+          REGEXP_EXTRACT(p.request_url, 'startDate=([^&]+)') AS start_date,
+          REGEXP_EXTRACT(p.request_url, 'endDate=([^&]+)') AS end_date,
+          p.run_id,
+          p.ingested_ts,
+          ROW_NUMBER() OVER (
+            PARTITION BY CAST(JSON_VALUE(agent, '$.agentId') AS INT64),
+              REGEXP_EXTRACT(p.request_url, 'startDate=([^&]+)')
+            ORDER BY p.ingested_ts DESC
+          ) AS rn
+        FROM \`${projectId}.raw.api_payload\` p,
+        UNNEST(JSON_QUERY_ARRAY(p.response_body_json, '$.agentPerformance')) AS agent
+        WHERE (p.page_status = 'SUCCESS' OR p.http_status_code = 200)
+          AND p.endpoint_id = 'nice-cxone-agents-performance'
+      )
+      SELECT * EXCEPT(rn) FROM extracted WHERE rn = 1
+    `;
+    const [job1] = await bqRegional.createQueryJob({ query: step1Query });
+    await job1.getQueryResults();
+    console.log("[agents-transform] Step 1 complete");
+
+    agentsTransformJob.step = "Step 2/3: Exporting to cloud storage...";
+    console.log("[agents-transform] Step 2: Export to GCS then load into incontact.agent_activity (US)");
+    try {
+      const [oldFiles] = await gcs.bucket(gcsBucket).getFiles({ prefix: `${gcsPrefix}/` });
+      if (oldFiles.length > 0) {
+        await Promise.all(oldFiles.map((f: any) => f.delete()));
+        console.log(`[agents-transform] Cleaned ${oldFiles.length} old staging files`);
+      }
+    } catch (cleanErr: any) {
+      console.warn("[agents-transform] Pre-cleanup warning:", cleanErr.message);
+    }
+
+    const dataset = bqRegional.dataset("raw");
+    const table = dataset.table("agents_extracted");
+    const [exportJob] = await table.extract(
+      gcs.bucket(gcsBucket).file(`${gcsPrefix}/data_*.avro`),
+      { format: "AVRO", gzip: false }
+    );
+    console.log("[agents-transform] Export complete, status:", exportJob.status?.state);
+
+    agentsTransformJob.step = "Step 3/3: Loading into target table...";
+    console.log("[agents-transform] Step 3: Load GCS → incontact.agent_activity (US)");
+    const incontactDataset = bqUS.dataset("incontact");
+    const targetTable = incontactDataset.table("agent_activity");
+    const [loadJob] = await targetTable.load(
+      gcs.bucket(gcsBucket).file(`${gcsPrefix}/data_*.avro`),
+      {
+        sourceFormat: "AVRO",
+        writeDisposition: "WRITE_TRUNCATE",
+        useAvroLogicalTypes: true,
+      }
+    );
+    console.log("[agents-transform] Step 3 complete, load status:", loadJob.status?.state);
+
+    const durationMs = Date.now() - startTime;
+
+    console.log("[agents-transform] Cleanup: removing GCS staging files");
+    try {
+      const [files] = await gcs.bucket(gcsBucket).getFiles({ prefix: `${gcsPrefix}/` });
+      await Promise.all(files.map((f: any) => f.delete()));
+    } catch (cleanupErr: any) {
+      console.warn("[agents-transform] Cleanup warning:", cleanupErr.message);
+    }
+
+    const loadMeta = await loadJob.getMetadata();
+    const totalRows = loadMeta[0]?.statistics?.load?.outputRows || null;
+
+    agentsTransformJob = {
+      status: "completed",
+      step: "Done",
+      startedAt: agentsTransformJob.startedAt,
+      completedAt: new Date().toISOString(),
+      durationMs,
+      durationFormatted: durationMs >= 60000
+        ? `${Math.floor(durationMs / 60000)}m ${Math.round((durationMs % 60000) / 1000)}s`
+        : `${Math.round(durationMs / 1000)}s`,
+      rowsProcessed: totalRows,
+    };
+    console.log("[agents-transform] Pipeline complete:", agentsTransformJob.durationFormatted, "rows:", totalRows);
+  } catch (err: any) {
+    console.error("[agents-transform] Pipeline failed:", err.message);
+    agentsTransformJob = {
+      status: "failed",
+      step: agentsTransformJob.step,
+      startedAt: agentsTransformJob.startedAt,
+      completedAt: new Date().toISOString(),
+      durationMs: Date.now() - startTime,
+      error: err.message,
+    };
+  }
+}
+
+router.post("/bq/transform-agents", async (_req, res) => {
+  if (agentsTransformJob.status === "running") {
+    res.status(409).json({ error: "Agents transform is already running", step: agentsTransformJob.step });
+    return;
+  }
+  agentsTransformJob = { status: "running", step: "Starting...", startedAt: new Date().toISOString() };
+  runAgentsTransformPipeline();
+  res.json({ message: "Agents transform started", status: "running" });
+});
+
+router.get("/bq/transform-agents-job-status", async (_req, res) => {
+  res.json(agentsTransformJob);
+});
+
+router.get("/bq/transform-agents-status", async (_req, res) => {
+  try {
+    const projectId = getGcpProjectId();
+    const bqUS = getBigQueryClient("US");
+    const bqRegional = getBigQueryClient("us-central1");
+
+    const [activityRows] = await bqUS.query({
+      query: `SELECT COUNT(*) as count FROM \`${projectId}.incontact.agent_activity\``,
+    }).catch(() => [[{ count: 0 }]]);
+    const activityCount = Number(activityRows[0]?.count || 0);
+
+    const [rawRows] = await bqRegional.query({
+      query: `SELECT COUNT(*) as count FROM \`${projectId}.raw.api_payload\` WHERE (page_status = 'SUCCESS' OR http_status_code = 200) AND endpoint_id = 'nice-cxone-agents-performance'`,
+    });
+    const rawPagesCount = Number(rawRows[0]?.count || 0);
+
+    const [latestRow] = await bqRegional.query({
+      query: `SELECT MAX(ingested_ts) as last_ingested FROM \`${projectId}.raw.api_payload\` WHERE (page_status = 'SUCCESS' OR http_status_code = 200) AND endpoint_id = 'nice-cxone-agents-performance'`,
+    });
+    const lastIngested = latestRow[0]?.last_ingested?.value || null;
+
+    res.json({
+      agentActivityCount: activityCount,
+      rawPagesCount,
+      lastIngested,
+    });
+  } catch (err: any) {
+    console.error("[bq/transform-agents-status]", err.message);
     res.status(500).json({ error: err.message });
   }
 });
