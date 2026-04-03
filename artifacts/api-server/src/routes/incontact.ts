@@ -98,6 +98,21 @@ const ENDPOINT_DEFS: EndpointDef[] = [
     ],
   },
   {
+    path: "/incontactapi/services/v27.0/agents/performance",
+    name: "Agents Performance",
+    description: "Retrieve performance metrics for all agents over a specified time range. Data needs at least 15 minutes to migrate to the warehouse before it is fully accurate.",
+    method: "GET",
+    category: "Workforce",
+    params: [
+      { name: "startDate", label: "Start Date", type: "date", required: true, placeholder: "2026-04-01", description: "Start of reporting interval (YYYY-MM-DD)" },
+      { name: "endDate", label: "End Date", type: "date", required: true, placeholder: "2026-04-01", description: "End of reporting interval (YYYY-MM-DD)" },
+      { name: "fields", label: "Fields", type: "string", placeholder: "agentId,agentName,totalCalls", description: "Comma-separated list of fields to return" },
+      { name: "skip", label: "Skip", type: "number", placeholder: "0", description: "Number of records to skip (pagination)" },
+      { name: "top", label: "Top", type: "number", placeholder: "100", description: "Max records to return" },
+      { name: "orderBy", label: "Order By", type: "string", placeholder: "agentName asc", description: "Field and direction to sort by" },
+    ],
+  },
+  {
     path: "/incontactapi/services/v30.0/skills/summary",
     name: "Skills Summary",
     description: "Get a summary of all configured skills including queue counts and service level data.",
