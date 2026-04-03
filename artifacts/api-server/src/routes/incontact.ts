@@ -75,6 +75,19 @@ const ENDPOINT_DEFS: EndpointDef[] = [
     ],
   },
   {
+    path: "/incontactapi/services/v30.0/contacts/state-history",
+    name: "Contact State History",
+    description: "Retrieve state history for contacts, showing how contacts transitioned through different states.",
+    method: "GET",
+    category: "Contacts",
+    params: [
+      { name: "updatedSince", label: "Updated Since", type: "string", placeholder: "2026-04-01T00:00:00Z", description: "Only return records updated after this timestamp" },
+      { name: "fields", label: "Fields", type: "string", placeholder: "contactId,state", description: "Comma-separated list of fields to return" },
+      { name: "skip", label: "Skip", type: "number", placeholder: "0", description: "Number of records to skip (pagination)" },
+      { name: "top", label: "Top", type: "number", placeholder: "1000", description: "Max records to return" },
+    ],
+  },
+  {
     path: "/incontactapi/services/v30.0/agents",
     name: "Agents",
     description: "List all agents configured in the NICE CXone system with their profiles and status.",
