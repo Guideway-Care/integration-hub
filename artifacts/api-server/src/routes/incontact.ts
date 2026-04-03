@@ -62,7 +62,7 @@ const ENDPOINT_DEFS: EndpointDef[] = [
     ],
   },
   {
-    path: "/incontactapi/services/v30.0/dispositions",
+    path: "/incontactapi/services/v28.0/dispositions",
     name: "Dispositions",
     description: "Retrieve all disposition codes configured in the NICE CXone system. Dispositions are used to categorize the outcome of a contact.",
     method: "GET",
