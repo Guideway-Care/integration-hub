@@ -27,6 +27,8 @@ import {
   Calendar,
   X,
   BookOpen,
+  Copy,
+  Check,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { MetricsSkeleton, TableSkeleton } from "@/components/table-skeleton";
@@ -95,6 +97,25 @@ const statusColors: Record<string, string> = {
   downloaded: "bg-green-100 text-green-700",
   failed: "bg-red-100 text-red-700",
 };
+
+function CopyJsonButton({ json }: { json: any }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      onClick={() => {
+        navigator.clipboard.writeText(JSON.stringify(json, null, 2)).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 2000);
+        });
+      }}
+      className="inline-flex items-center gap-1 px-2 py-1 border border-border rounded-md text-xs hover:bg-muted transition-colors"
+      title="Copy JSON to clipboard"
+    >
+      {copied ? <Check className="w-3 h-3 text-green-600" /> : <Copy className="w-3 h-3" />}
+      {copied ? "Copied" : "Copy"}
+    </button>
+  );
+}
 
 function PipelineStep({
   number,
@@ -629,8 +650,15 @@ export default function InContactPage() {
   const fetchApiMutation = useMutation({
     mutationFn: () => {
       const params: Record<string, string> = {};
+      const paramDefs = selectedEndpointDef?.params || [];
       Object.entries(apiParamValues).forEach(([k, v]) => {
-        if (v.trim()) params[k] = v.trim();
+        if (!v.trim()) return;
+        const def = paramDefs.find((p) => p.name === k);
+        if (def?.type === "date" && /^\d{4}-\d{2}-\d{2}$/.test(v.trim())) {
+          params[k] = `${v.trim()}T00:00:00Z`;
+        } else {
+          params[k] = v.trim();
+        }
       });
       return api.post<any>("/incontact/fetch", { endpoint: apiEndpoint, params });
     },
@@ -1463,6 +1491,7 @@ export default function InContactPage() {
                           {fetchResult.statusCode < 400 ? <CheckCircle className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
                           {fetchResult.statusCode} {fetchResult.statusText}
                         </span>
+                        <CopyJsonButton json={fetchResult.data} />
                       </div>
                     </div>
                     <pre className="text-xs p-4 overflow-auto max-h-[500px] whitespace-pre-wrap font-mono">
