@@ -29,11 +29,12 @@ import {
   BookOpen,
   Copy,
   Check,
+  Users,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { MetricsSkeleton, TableSkeleton } from "@/components/table-skeleton";
 
-type Tab = "pipeline" | "monitor" | "staging" | "recordings" | "api-explorer" | "docs";
+type Tab = "pipeline" | "agents" | "monitor" | "staging" | "recordings" | "api-explorer" | "docs";
 
 interface StagingSummary {
   pending: number;
@@ -75,6 +76,64 @@ interface DailyCount {
   contact_date: { value: string } | string;
   dow: number;
   contact_count: number;
+}
+
+interface AgentPerformance {
+  agentId: string;
+  teamId: string;
+  agentOffered: string;
+  inboundHandled: string;
+  inboundTime: string;
+  inboundTalkTime: string;
+  inboundAvgTalkTime: string;
+  outboundHandled: string;
+  outboundTime: string;
+  outboundTalkTime: string;
+  outboundAvgTalkTime: string;
+  totalHandled: string;
+  totalTalkTime: string;
+  totalAvgTalkTime: string;
+  totalAvgHandleTime: string;
+  consultTime: string;
+  availableTime: string;
+  unavailableTime: string;
+  acwTime: string;
+  refused: string;
+  percentRefused: string;
+  loginTime: string;
+  workingRate: string;
+  occupancy: string;
+}
+
+interface LastAgentsRun {
+  runId: string;
+  status: string;
+  runType: string;
+  windowStartTs: string | null;
+  windowEndTs: string | null;
+  pageCount: number;
+  apiCallCount: number;
+  errorCount: number;
+  startedTs: string | null;
+  endedTs: string | null;
+  cloudRunExecutionId: string | null;
+  errorSummary: string | null;
+}
+
+function parseDuration(iso: string): number {
+  if (!iso || iso === "PT0S") return 0;
+  const match = iso.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:([\d.]+)S)?/);
+  if (!match) return 0;
+  return (parseInt(match[1] || "0") * 3600) + (parseInt(match[2] || "0") * 60) + parseFloat(match[3] || "0");
+}
+
+function formatDurationHM(iso: string): string {
+  const totalSec = parseDuration(iso);
+  if (totalSec === 0) return "—";
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
 }
 
 function formatBytes(bytes: number | null): string {
@@ -338,6 +397,24 @@ export default function InContactPage() {
   const [filterPreset, setFilterPreset] = useState<FilterPreset>("all");
   const [filterStartDate, setFilterStartDate] = useState("");
   const [filterEndDate, setFilterEndDate] = useState("");
+
+  const [agentsSeeded, setAgentsSeeded] = useState(false);
+  const [agentDateRange, setAgentDateRange] = useState(() => {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    return {
+      startDate: yesterday.toISOString().split("T")[0],
+      endDate: yesterday.toISOString().split("T")[0],
+    };
+  });
+  const [agentData, setAgentData] = useState<AgentPerformance[] | null>(null);
+  const [agentSearchTerm, setAgentSearchTerm] = useState("");
+  const [agentSortField, setAgentSortField] = useState<"totalHandled" | "occupancy" | "loginTime" | "totalTalkTime" | "agentId">("totalHandled");
+  const [agentSortDir, setAgentSortDir] = useState<"asc" | "desc">("desc");
+  const [agentPage, setAgentPage] = useState(0);
+  const [showInactiveAgents, setShowInactiveAgents] = useState(false);
+  const [agentSubTab, setAgentSubTab] = useState<"extract" | "results">("extract");
+  const agentPageSize = 50;
 
   function getFilterDates(): { startDate?: string; endDate?: string } {
     const today = new Date();
@@ -694,10 +771,127 @@ export default function InContactPage() {
   const stagingTotalPages = Math.max(1, Math.ceil(allQueueItems.length / pageSize));
   const stagingItems = allQueueItems.slice(stagingPage * pageSize, (stagingPage + 1) * pageSize);
 
-  
+  const seedAgentsMutation = useMutation({
+    mutationFn: () => api.post<any>("/incontact/seed-agents-endpoint"),
+    onSuccess: () => {
+      setAgentsSeeded(true);
+      queryClient.invalidateQueries({ queryKey: ["agents-last-run"] });
+    },
+    onError: () => {},
+  });
+
+  useEffect(() => {
+    if (!agentsSeeded) seedAgentsMutation.mutate();
+  }, []);
+
+  const { data: agentsLastRunData } = useQuery({
+    queryKey: ["agents-last-run"],
+    queryFn: () => api.get<{ data: LastAgentsRun | null }>("/incontact/agents-last-run"),
+    refetchInterval: (query) => {
+      const run = query.state.data?.data;
+      if (run && (run.status === "PENDING" || run.status === "RUNNING")) return 5000;
+      return false;
+    },
+  });
+  const agentsLastRun = agentsLastRunData?.data ?? null;
+  const isAgentsRunActive = agentsLastRun?.status === "PENDING" || agentsLastRun?.status === "RUNNING";
+
+  const fetchAgentsRunMutation = useMutation({
+    mutationFn: () => {
+      const startDate = `${agentDateRange.startDate}T00:00:00Z`;
+      const endD = new Date(agentDateRange.endDate + "T00:00:00Z");
+      endD.setUTCDate(endD.getUTCDate() + 1);
+      const endDate = endD.toISOString().replace(".000Z", "Z");
+      return api.post<any>("/runs", {
+        sourceSystemId: "nice-cxone",
+        endpointId: "nice-cxone-agents-performance",
+        runType: "MANUAL",
+        requestedBy: "control-plane",
+        windowStartTs: startDate,
+        windowEndTs: endDate,
+      });
+    },
+    onSuccess: (data: any) => {
+      const runId = data?.data?.runId ?? "unknown";
+      const execId = data?.data?.cloudRunExecutionId;
+      toast({
+        title: "Extraction run created",
+        description: `Run ${runId.slice(0, 8)}... ${execId ? "triggered successfully" : "created (job trigger pending)"}`,
+      });
+      queryClient.invalidateQueries({ queryKey: ["agents-last-run"] });
+      queryClient.invalidateQueries({ queryKey: ["runs"] });
+    },
+    onError: (err) => {
+      toast({ title: "Failed to create extraction run", description: (err as Error).message, variant: "destructive" });
+    },
+  });
+
+  const previewAgentsMutation = useMutation({
+    mutationFn: () => {
+      const startDate = `${agentDateRange.startDate}T00:00:00Z`;
+      const endD = new Date(agentDateRange.endDate + "T00:00:00Z");
+      endD.setUTCDate(endD.getUTCDate() + 1);
+      const endDate = endD.toISOString().replace(".000Z", "Z");
+      return api.post<any>("/incontact/fetch", {
+        endpoint: "/incontactapi/services/v27.0/agents/performance",
+        params: { startDate, endDate },
+      });
+    },
+    onSuccess: (data: any) => {
+      const perf = data?.data?.agentPerformance ?? [];
+      setAgentData(perf);
+      setAgentPage(0);
+      const active = perf.filter((a: AgentPerformance) => a.totalHandled !== "0" || a.loginTime !== "PT0S");
+      toast({ title: "Preview loaded", description: `${perf.length} agents found, ${active.length} with activity` });
+      setAgentSubTab("results");
+    },
+    onError: (err) => {
+      toast({ title: "Preview failed", description: (err as Error).message, variant: "destructive" });
+    },
+  });
+
+  const filteredAgents = (agentData ?? [])
+    .filter((a) => {
+      if (!showInactiveAgents && a.totalHandled === "0" && a.loginTime === "PT0S") return false;
+      if (agentSearchTerm) return a.agentId.includes(agentSearchTerm) || a.teamId.includes(agentSearchTerm);
+      return true;
+    })
+    .sort((a, b) => {
+      let aVal: number, bVal: number;
+      if (agentSortField === "agentId") { aVal = parseInt(a.agentId); bVal = parseInt(b.agentId); }
+      else if (agentSortField === "totalHandled") { aVal = parseInt(a.totalHandled); bVal = parseInt(b.totalHandled); }
+      else if (agentSortField === "occupancy") { aVal = parseFloat(a.occupancy); bVal = parseFloat(b.occupancy); }
+      else if (agentSortField === "loginTime") { aVal = parseDuration(a.loginTime); bVal = parseDuration(b.loginTime); }
+      else { aVal = parseDuration(a.totalTalkTime); bVal = parseDuration(b.totalTalkTime); }
+      return agentSortDir === "desc" ? bVal - aVal : aVal - bVal;
+    });
+
+  const agentTotalPages = Math.max(1, Math.ceil(filteredAgents.length / agentPageSize));
+  const pagedAgents = filteredAgents.slice(agentPage * agentPageSize, (agentPage + 1) * agentPageSize);
+
+  const agentSummary = agentData ? {
+    total: agentData.length,
+    active: agentData.filter((a) => a.totalHandled !== "0" || a.loginTime !== "PT0S").length,
+    totalCalls: agentData.reduce((s, a) => s + parseInt(a.totalHandled), 0),
+    totalTalkSeconds: agentData.reduce((s, a) => s + parseDuration(a.totalTalkTime), 0),
+    avgOccupancy: (() => {
+      const active = agentData.filter((a) => parseFloat(a.occupancy) > 0);
+      if (active.length === 0) return 0;
+      return active.reduce((s, a) => s + parseFloat(a.occupancy), 0) / active.length;
+    })(),
+  } : null;
+
+  function handleAgentSort(field: typeof agentSortField) {
+    if (agentSortField === field) setAgentSortDir(agentSortDir === "desc" ? "asc" : "desc");
+    else { setAgentSortField(field); setAgentSortDir("desc"); }
+    setAgentPage(0);
+  }
+  const agentSortArrow = (field: typeof agentSortField) =>
+    agentSortField === field ? (agentSortDir === "desc" ? " ▼" : " ▲") : "";
 
   const tabs: { id: Tab; label: string }[] = [
     { id: "pipeline", label: "Contacts" },
+    { id: "agents", label: "Agents" },
     { id: "monitor", label: "Monitor" },
     { id: "staging", label: "Staging Queue" },
     { id: "recordings", label: "Recordings" },
@@ -1021,6 +1215,258 @@ export default function InContactPage() {
               </div>
             </div>
           </PipelineStep>
+        </div>
+      )}
+
+      {tab === "agents" && (
+        <div className="space-y-4">
+          <div className="flex gap-2 border-b border-border mb-4">
+            {[{ id: "extract" as const, label: "Extract" }, { id: "results" as const, label: "Results" }].map((st) => (
+              <button
+                key={st.id}
+                onClick={() => setAgentSubTab(st.id)}
+                className={`px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
+                  agentSubTab === st.id
+                    ? "border-primary text-primary"
+                    : "border-transparent text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {st.label}
+                {st.id === "results" && agentData ? (
+                  <span className="ml-1.5 text-xs bg-muted rounded-full px-1.5 py-0.5">{agentData.length}</span>
+                ) : null}
+              </button>
+            ))}
+          </div>
+
+          {agentSubTab === "extract" && (
+            <div className="space-y-4">
+              <PipelineStep
+                number={1}
+                title="Retrieve Agent Performance"
+                description="Fetch performance metrics from NICE CXone API and store raw payload in BigQuery api_payload table"
+                status={
+                  fetchAgentsRunMutation.isPending || isAgentsRunActive ? "running" :
+                  agentsLastRun?.status === "COMPLETED" ? "success" :
+                  agentsLastRun?.status === "FAILED" ? "error" :
+                  "idle"
+                }
+                onRun={() => fetchAgentsRunMutation.mutate()}
+                isRunning={fetchAgentsRunMutation.isPending || isAgentsRunActive}
+              >
+                <div className="flex items-center gap-3 mb-3">
+                  <div>
+                    <label className="block text-xs font-medium mb-1">Start Date</label>
+                    <input type="date" value={agentDateRange.startDate}
+                      onChange={(e) => setAgentDateRange({ ...agentDateRange, startDate: e.target.value })}
+                      className="px-3 py-1.5 border border-input rounded-md text-sm bg-background" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium mb-1">End Date</label>
+                    <input type="date" value={agentDateRange.endDate}
+                      onChange={(e) => setAgentDateRange({ ...agentDateRange, endDate: e.target.value })}
+                      className="px-3 py-1.5 border border-input rounded-md text-sm bg-background" />
+                  </div>
+                </div>
+
+                {agentsLastRun && (
+                  <div className="p-3 bg-muted/50 border border-border rounded-md text-xs space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium">Last Extraction</span>
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${
+                        agentsLastRun.status === "COMPLETED" ? "bg-green-100 text-green-700" :
+                        agentsLastRun.status === "FAILED" ? "bg-red-100 text-red-700" :
+                        agentsLastRun.status === "RUNNING" ? "bg-blue-100 text-blue-700" :
+                        agentsLastRun.status === "PENDING" ? "bg-yellow-100 text-yellow-700" :
+                        "bg-gray-100 text-gray-700"
+                      }`}>
+                        {agentsLastRun.status === "COMPLETED" ? <CheckCircle2 className="w-3 h-3" /> :
+                         agentsLastRun.status === "FAILED" ? <XCircle className="w-3 h-3" /> :
+                         (agentsLastRun.status === "RUNNING" || agentsLastRun.status === "PENDING") ? <Loader2 className="w-3 h-3 animate-spin" /> :
+                         <Clock className="w-3 h-3" />}
+                        {agentsLastRun.status}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-muted-foreground">
+                      <div><span className="font-medium text-foreground">Run ID: </span>{agentsLastRun.runId?.slice(0, 8)}...</div>
+                      <div>
+                        <span className="font-medium text-foreground">Window: </span>
+                        {agentsLastRun.windowStartTs ? new Date(agentsLastRun.windowStartTs).toLocaleDateString(undefined, { timeZone: "UTC" }) : "—"}
+                        {" → "}
+                        {agentsLastRun.windowEndTs ? new Date(agentsLastRun.windowEndTs).toLocaleDateString(undefined, { timeZone: "UTC" }) : "—"}
+                      </div>
+                      <div><span className="font-medium text-foreground">Pages / Errors: </span>{agentsLastRun.pageCount} / {agentsLastRun.errorCount}</div>
+                      <div><span className="font-medium text-foreground">Completed: </span>{agentsLastRun.endedTs ? new Date(agentsLastRun.endedTs).toLocaleString() : "—"}</div>
+                    </div>
+                    {agentsLastRun.errorSummary && (
+                      <div className="text-red-600 mt-1">Error: {agentsLastRun.errorSummary}</div>
+                    )}
+                  </div>
+                )}
+              </PipelineStep>
+
+              <div className="flex justify-center">
+                <ArrowRight className="w-5 h-5 text-muted-foreground rotate-90" />
+              </div>
+
+              <PipelineStep
+                number={2}
+                title="Preview Results"
+                description="Load agent performance data from the API for review (does not store to BigQuery)"
+                status={previewAgentsMutation.isPending ? "running" : agentData ? "success" : "idle"}
+                onRun={() => previewAgentsMutation.mutate()}
+                isRunning={previewAgentsMutation.isPending}
+              >
+                {agentData && agentSummary && (
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                    <div className="text-center p-3 bg-muted/50 rounded-lg">
+                      <div className="text-2xl font-bold text-foreground">{agentSummary.total}</div>
+                      <div className="text-xs text-muted-foreground">Total Agents</div>
+                    </div>
+                    <div className="text-center p-3 bg-muted/50 rounded-lg">
+                      <div className="text-2xl font-bold text-green-600">{agentSummary.active}</div>
+                      <div className="text-xs text-muted-foreground">Active Agents</div>
+                    </div>
+                    <div className="text-center p-3 bg-muted/50 rounded-lg">
+                      <div className="text-2xl font-bold text-blue-600">{agentSummary.totalCalls.toLocaleString()}</div>
+                      <div className="text-xs text-muted-foreground">Total Calls</div>
+                    </div>
+                    <div className="text-center p-3 bg-muted/50 rounded-lg">
+                      <div className="text-2xl font-bold text-purple-600">
+                        {Math.floor(agentSummary.totalTalkSeconds / 3600)}h {Math.floor((agentSummary.totalTalkSeconds % 3600) / 60)}m
+                      </div>
+                      <div className="text-xs text-muted-foreground">Total Talk Time</div>
+                    </div>
+                    <div className="text-center p-3 bg-muted/50 rounded-lg">
+                      <div className="text-2xl font-bold text-orange-600">{agentSummary.avgOccupancy.toFixed(1)}%</div>
+                      <div className="text-xs text-muted-foreground">Avg Occupancy</div>
+                    </div>
+                  </div>
+                )}
+              </PipelineStep>
+            </div>
+          )}
+
+          {agentSubTab === "results" && (
+            <div className="space-y-4">
+              {!agentData ? (
+                <div className="text-center py-12 text-muted-foreground">
+                  <Users className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                  <p className="text-sm">No data loaded yet. Switch to the Extract sub-tab and run a preview.</p>
+                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                    {[
+                      { label: "Total Agents", value: agentSummary?.total, color: "text-foreground" },
+                      { label: "Active Agents", value: agentSummary?.active, color: "text-green-600" },
+                      { label: "Total Calls", value: agentSummary?.totalCalls.toLocaleString(), color: "text-blue-600" },
+                      { label: "Total Talk Time", value: agentSummary ? `${Math.floor(agentSummary.totalTalkSeconds / 3600)}h ${Math.floor((agentSummary.totalTalkSeconds % 3600) / 60)}m` : "—", color: "text-purple-600" },
+                      { label: "Avg Occupancy", value: `${agentSummary?.avgOccupancy.toFixed(1)}%`, color: "text-orange-600" },
+                    ].map((stat) => (
+                      <div key={stat.label} className="text-center p-3 border border-border rounded-lg bg-card">
+                        <div className={`text-2xl font-bold ${stat.color}`}>{stat.value}</div>
+                        <div className="text-xs text-muted-foreground">{stat.label}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <div className="relative flex-1 min-w-[200px] max-w-sm">
+                      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                      <input value={agentSearchTerm}
+                        onChange={(e) => { setAgentSearchTerm(e.target.value); setAgentPage(0); }}
+                        placeholder="Search by Agent ID or Team ID..."
+                        className="pl-9 pr-3 py-1.5 w-full border border-input rounded-md text-sm bg-background" />
+                    </div>
+                    <label className="inline-flex items-center gap-2 text-sm cursor-pointer">
+                      <input type="checkbox" checked={showInactiveAgents}
+                        onChange={(e) => { setShowInactiveAgents(e.target.checked); setAgentPage(0); }}
+                        className="rounded border-input" />
+                      Show inactive agents
+                    </label>
+                    <div className="text-xs text-muted-foreground">
+                      Showing {filteredAgents.length} of {agentData.length} agents
+                    </div>
+                    <div className="flex-1" />
+                    <CopyJsonButton json={agentData} />
+                  </div>
+
+                  <div className="border border-border rounded-lg overflow-hidden">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="bg-muted/50 border-b border-border">
+                            <th className="px-3 py-2 text-left font-medium text-xs cursor-pointer hover:bg-muted" onClick={() => handleAgentSort("agentId")}>Agent ID{agentSortArrow("agentId")}</th>
+                            <th className="px-3 py-2 text-left font-medium text-xs">Team ID</th>
+                            <th className="px-3 py-2 text-right font-medium text-xs">Offered</th>
+                            <th className="px-3 py-2 text-right font-medium text-xs">Inbound</th>
+                            <th className="px-3 py-2 text-right font-medium text-xs">Outbound</th>
+                            <th className="px-3 py-2 text-right font-medium text-xs cursor-pointer hover:bg-muted" onClick={() => handleAgentSort("totalHandled")}>Total Handled{agentSortArrow("totalHandled")}</th>
+                            <th className="px-3 py-2 text-right font-medium text-xs cursor-pointer hover:bg-muted" onClick={() => handleAgentSort("totalTalkTime")}>Talk Time{agentSortArrow("totalTalkTime")}</th>
+                            <th className="px-3 py-2 text-right font-medium text-xs">Avg Handle</th>
+                            <th className="px-3 py-2 text-right font-medium text-xs cursor-pointer hover:bg-muted" onClick={() => handleAgentSort("loginTime")}>Login Time{agentSortArrow("loginTime")}</th>
+                            <th className="px-3 py-2 text-right font-medium text-xs">Available</th>
+                            <th className="px-3 py-2 text-right font-medium text-xs">ACW</th>
+                            <th className="px-3 py-2 text-right font-medium text-xs cursor-pointer hover:bg-muted" onClick={() => handleAgentSort("occupancy")}>Occupancy{agentSortArrow("occupancy")}</th>
+                            <th className="px-3 py-2 text-right font-medium text-xs">Working Rate</th>
+                            <th className="px-3 py-2 text-right font-medium text-xs">Refused</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {pagedAgents.map((a) => (
+                            <tr key={a.agentId} className="border-b border-border hover:bg-muted/30 transition-colors">
+                              <td className="px-3 py-2 font-mono text-xs">{a.agentId}</td>
+                              <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{a.teamId}</td>
+                              <td className="px-3 py-2 text-right">{a.agentOffered}</td>
+                              <td className="px-3 py-2 text-right">{a.inboundHandled}</td>
+                              <td className="px-3 py-2 text-right">{a.outboundHandled}</td>
+                              <td className="px-3 py-2 text-right font-semibold">{a.totalHandled}</td>
+                              <td className="px-3 py-2 text-right">{formatDurationHM(a.totalTalkTime)}</td>
+                              <td className="px-3 py-2 text-right">{formatDurationHM(a.totalAvgHandleTime)}</td>
+                              <td className="px-3 py-2 text-right">{formatDurationHM(a.loginTime)}</td>
+                              <td className="px-3 py-2 text-right">{formatDurationHM(a.availableTime)}</td>
+                              <td className="px-3 py-2 text-right">{formatDurationHM(a.acwTime)}</td>
+                              <td className="px-3 py-2 text-right">
+                                <span className={`inline-block min-w-[3rem] text-right ${
+                                  parseFloat(a.occupancy) >= 80 ? "text-green-600 font-semibold" :
+                                  parseFloat(a.occupancy) >= 50 ? "text-yellow-600" :
+                                  parseFloat(a.occupancy) > 0 ? "text-red-600" :
+                                  "text-muted-foreground"
+                                }`}>
+                                  {parseFloat(a.occupancy) > 0 ? `${a.occupancy}%` : "—"}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2 text-right">{parseFloat(a.workingRate) > 0 ? `${a.workingRate}%` : "—"}</td>
+                              <td className="px-3 py-2 text-right">
+                                {parseInt(a.refused) > 0 ? <span className="text-red-600 font-medium">{a.refused}</span> : "0"}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {agentTotalPages > 1 && (
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs text-muted-foreground">Page {agentPage + 1} of {agentTotalPages} ({filteredAgents.length} agents)</p>
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => setAgentPage(Math.max(0, agentPage - 1))} disabled={agentPage === 0}
+                          className="p-1.5 border border-border rounded hover:bg-muted disabled:opacity-30">
+                          <ChevronLeft className="w-4 h-4" />
+                        </button>
+                        <button onClick={() => setAgentPage(Math.min(agentTotalPages - 1, agentPage + 1))} disabled={agentPage >= agentTotalPages - 1}
+                          className="p-1.5 border border-border rounded hover:bg-muted disabled:opacity-30">
+                          <ChevronRight className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
         </div>
       )}
 
