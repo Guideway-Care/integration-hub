@@ -655,7 +655,7 @@ export default function InContactPage() {
         if (!v.trim()) return;
         const def = paramDefs.find((p) => p.name === k);
         if (def?.type === "date" && /^\d{4}-\d{2}-\d{2}$/.test(v.trim())) {
-          params[k] = `${v.trim()}T00:00:00Z`;
+          params[k] = k.toLowerCase().includes("end") ? `${v.trim()}T23:59:59Z` : `${v.trim()}T00:00:00Z`;
         } else {
           params[k] = v.trim();
         }
