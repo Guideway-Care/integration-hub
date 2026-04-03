@@ -599,8 +599,8 @@ async function runAgentsTransformPipeline() {
           IFNULL(CAST(REGEXP_EXTRACT(JSON_VALUE(agent, '$.loginTime'), r'(\\d+)H') AS FLOAT64) * 3600, 0) + IFNULL(CAST(REGEXP_EXTRACT(JSON_VALUE(agent, '$.loginTime'), r'(\\d+)M') AS FLOAT64) * 60, 0) + IFNULL(CAST(REGEXP_EXTRACT(JSON_VALUE(agent, '$.loginTime'), r'([\\d.]+)S') AS FLOAT64), 0) AS login_time_seconds,
           CAST(JSON_VALUE(agent, '$.workingRate') AS FLOAT64) AS working_rate,
           CAST(JSON_VALUE(agent, '$.occupancy') AS FLOAT64) AS occupancy,
-          REGEXP_EXTRACT(p.request_url, 'startDate=([^&]+)') AS start_date,
-          REGEXP_EXTRACT(p.request_url, 'endDate=([^&]+)') AS end_date,
+          CAST(REPLACE(REGEXP_EXTRACT(p.request_url, 'startDate=([^&]+)'), '%3A', ':') AS TIMESTAMP) AS start_date,
+          CAST(REPLACE(REGEXP_EXTRACT(p.request_url, 'endDate=([^&]+)'), '%3A', ':') AS TIMESTAMP) AS end_date,
           p.run_id,
           p.ingested_ts,
           ROW_NUMBER() OVER (
