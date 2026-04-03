@@ -1,4 +1,4 @@
-# API Controller Hub
+# Integration Hub
 
 ## Overview
 
@@ -207,3 +207,4 @@ pnpm --filter @workspace/db run push
 # Typecheck everything
 pnpm run typecheck
 ```
+

@@ -62,7 +62,7 @@ const ENDPOINT_DEFS: EndpointDef[] = [
     ],
   },
   {
-    path: "/services/v31.0/dispositions",
+    path: "/incontactapi/services/v28.0/dispositions",
     name: "Dispositions",
     description: "Retrieve all disposition codes configured in the NICE CXone system. Dispositions are used to categorize the outcome of a contact.",
     method: "GET",
@@ -125,7 +125,7 @@ const fetchBodySchema = z.object({
   params: z.record(z.string()).optional(),
 });
 
-async function getInContactBearerToken(): Promise<{ token: string; projectId: string; resourceServerBaseUri: string }> {
+async function getInContactBearerToken(): Promise<{ token: string; projectId: string; resourceServerBaseUri: string; apiBaseUri: string; tokenMeta: Record<string, any> }> {
   const { client, projectId } = await getGcpSecretManagerClient();
   const accessKeyId = await getSecretValue(client, projectId, "inContact-Client-Id");
   const accessKeySecret = await getSecretValue(client, projectId, "inContact-Client-Secret");
@@ -143,7 +143,23 @@ async function getInContactBearerToken(): Promise<{ token: string; projectId: st
 
   const tokenData = await tokenResponse.json() as any;
   const resourceServerBaseUri = tokenData.resource_server_base_uri || "https://na1.nice-incontact.com";
-  return { token: tokenData.access_token, projectId, resourceServerBaseUri };
+  let apiBaseUri = resourceServerBaseUri;
+  try {
+    const parsed = new URL(resourceServerBaseUri);
+    if (!parsed.hostname.startsWith("api-")) {
+      const match = parsed.hostname.match(/^([^.]+)\./);
+      if (match) {
+        apiBaseUri = `${parsed.protocol}//api-${match[1]}.niceincontact.com`;
+      }
+    }
+  } catch {}
+  const tokenMeta: Record<string, any> = {};
+  for (const key of Object.keys(tokenData)) {
+    if (key !== "access_token" && key !== "refresh_token") {
+      tokenMeta[key] = tokenData[key];
+    }
+  }
+  return { token: tokenData.access_token, projectId, resourceServerBaseUri, apiBaseUri, tokenMeta };
 }
 
 const router: IRouter = Router();
@@ -173,16 +189,50 @@ router.get("/incontact/endpoints", (_req, res) => {
 
 router.post("/incontact/auth-test", async (_req, res) => {
   try {
-    const { token, resourceServerBaseUri } = await getInContactBearerToken();
+    const { token, resourceServerBaseUri, tokenMeta } = await getInContactBearerToken();
     res.json({
       authenticated: true,
       resourceServerBaseUri,
+      tokenMeta,
       tokenLength: token.length,
       timestamp: new Date().toISOString(),
     });
   } catch (err: any) {
     console.error("[incontact/auth-test]", err.message);
     res.status(500).json({ error: "Authentication failed — check that your Client ID and Secret are valid access keys" });
+  }
+});
+
+router.get("/incontact/debug-dispositions", async (_req, res) => {
+  try {
+    const { token, resourceServerBaseUri, apiBaseUri, tokenMeta } = await getInContactBearerToken();
+    const baseUris = [
+      { label: "resourceServerBaseUri", url: resourceServerBaseUri },
+      { label: "apiBaseUri (derived)", url: apiBaseUri },
+    ];
+    const pathSuffixes = [
+      "/incontactapi/services/v28.0/dispositions",
+      "/incontactapi/services/v24.0/dispositions",
+      "/incontactapi/services/v19.0/dispositions",
+      "/incontactapi/services/v12.0/dispositions",
+    ];
+    const results: any[] = [];
+    for (const base of baseUris) {
+      for (const p of pathSuffixes) {
+        const fullUrl = `${base.url}${p}`;
+        try {
+          const r = await fetch(fullUrl, { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } });
+          const ct = r.headers.get("content-type") || "";
+          const body = ct.includes("json") ? await r.json() : (await r.text()).slice(0, 200);
+          results.push({ base: base.label, baseUrl: base.url, path: p, status: r.status, body: typeof body === "string" ? body : JSON.stringify(body).slice(0, 300) });
+        } catch (e: any) {
+          results.push({ base: base.label, baseUrl: base.url, path: p, status: "error", body: e.message });
+        }
+      }
+    }
+    res.json({ resourceServerBaseUri, apiBaseUri, tokenMeta, results });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -194,7 +244,7 @@ router.post("/incontact/fetch", async (req, res) => {
       return;
     }
 
-    const { token, resourceServerBaseUri } = await getInContactBearerToken();
+    const { token, resourceServerBaseUri, apiBaseUri } = await getInContactBearerToken();
     const { endpoint, params } = parsed.data;
 
     let resolvedPath = endpoint;
@@ -209,7 +259,7 @@ router.post("/incontact/fetch", async (req, res) => {
       });
     }
 
-    const url = new URL(`${resourceServerBaseUri}${resolvedPath}`);
+    const url = new URL(`${apiBaseUri}${resolvedPath}`);
     Object.entries(queryParams).forEach(([k, v]) => url.searchParams.set(k, v));
 
     console.log(`[incontact/fetch] URL: ${url.toString()}`);
@@ -249,11 +299,11 @@ router.post("/incontact/fetch", async (req, res) => {
 
 async function fetchInContactEndpoint(
   token: string,
-  resourceServerBaseUri: string,
+  apiBaseUri: string,
   endpointPath: string,
   params?: Record<string, string>,
 ): Promise<any> {
-  const url = new URL(`${resourceServerBaseUri}${endpointPath}`);
+  const url = new URL(`${apiBaseUri}${endpointPath}`);
   if (params) {
     Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
   }
@@ -273,7 +323,7 @@ async function fetchInContactEndpoint(
 
 router.post("/incontact/sync-dispositions", async (_req, res) => {
   try {
-    const { token, resourceServerBaseUri } = await getInContactBearerToken();
+    const { token, apiBaseUri } = await getInContactBearerToken();
     const bq = getBigQueryClient();
 
     const endpointPath = ENDPOINT_DEFS.find(e => e.name === "Dispositions")!.path;
@@ -283,7 +333,7 @@ router.post("/incontact/sync-dispositions", async (_req, res) => {
     let hasMore = true;
 
     while (hasMore) {
-      const data = await fetchInContactEndpoint(token, resourceServerBaseUri, endpointPath, {
+      const data = await fetchInContactEndpoint(token, apiBaseUri, endpointPath, {
         skip: String(skip),
         top: String(top),
       });
