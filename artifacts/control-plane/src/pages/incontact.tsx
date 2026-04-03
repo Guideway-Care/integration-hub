@@ -414,6 +414,7 @@ export default function InContactPage() {
   const [agentPage, setAgentPage] = useState(0);
   const [showInactiveAgents, setShowInactiveAgents] = useState(false);
   const [agentSubTab, setAgentSubTab] = useState<"extract" | "results">("extract");
+  const [monitorSubTab, setMonitorSubTab] = useState<"contacts" | "agents">("contacts");
   const agentPageSize = 50;
 
   function getFilterDates(): { startDate?: string; endDate?: string } {
@@ -528,6 +529,15 @@ export default function InContactPage() {
     queryFn: () => api.get<{ data: DailyCount[] }>(`/monitor/contact-daily-counts${monitorSuffix}`),
     retry: false,
   });
+
+  const { data: agentMonitorData, isLoading: agentMonitorLoading } = useQuery({
+    queryKey: ["agent-monitor-daily", filterDates.startDate, filterDates.endDate],
+    queryFn: () => api.get<{ data: DailyCount[] }>(`/monitor/agent-daily-counts${monitorSuffix}`),
+    retry: false,
+  });
+
+  const agentMonitorRows = agentMonitorData?.data ?? [];
+  const totalAgentDays = agentMonitorRows.reduce((a, b) => a + b.contact_count, 0);
 
   interface EndpointParam {
     name: string;
@@ -1512,6 +1522,22 @@ export default function InContactPage() {
 
       {tab === "monitor" && (
         <div className="space-y-4">
+          <div className="flex gap-2 border-b border-border mb-4">
+            {[{ id: "contacts" as const, label: "Contacts" }, { id: "agents" as const, label: "Agents" }].map((st) => (
+              <button
+                key={st.id}
+                onClick={() => setMonitorSubTab(st.id)}
+                className={`px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
+                  monitorSubTab === st.id
+                    ? "border-primary text-primary"
+                    : "border-transparent text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {st.label}
+              </button>
+            ))}
+          </div>
+
           <div className="flex flex-wrap items-center gap-2 border border-border rounded-lg p-3 bg-card">
             <Filter className="w-4 h-4 text-muted-foreground shrink-0" />
             <span className="text-sm font-medium text-muted-foreground shrink-0">Filter:</span>
@@ -1561,39 +1587,72 @@ export default function InContactPage() {
             )}
           </div>
 
-          {summaryLoading ? (
-            <MetricsSkeleton />
-          ) : (
-            <div className="grid gap-3 grid-cols-2 md:grid-cols-5 mb-2">
-              <div className="border border-border rounded-lg p-3 bg-card text-center">
-                <div className="text-2xl font-bold text-green-600">{summary?.downloaded?.toLocaleString() ?? "—"}</div>
-                <div className="text-xs text-muted-foreground">Downloaded</div>
-              </div>
-              <div className="border border-border rounded-lg p-3 bg-card text-center">
-                <div className="text-2xl font-bold text-yellow-600">{summary?.pending?.toLocaleString() ?? "—"}</div>
-                <div className="text-xs text-muted-foreground">Pending</div>
-              </div>
-              <div className="border border-border rounded-lg p-3 bg-card text-center">
-                <div className="text-2xl font-bold text-blue-600">{summary?.processing?.toLocaleString() ?? "—"}</div>
-                <div className="text-xs text-muted-foreground">Processing</div>
-              </div>
-              <div className="border border-border rounded-lg p-3 bg-card text-center">
-                <div className="text-2xl font-bold text-red-600">{summary?.failed?.toLocaleString() ?? "—"}</div>
-                <div className="text-xs text-muted-foreground">Failed</div>
-              </div>
-              <div className="border border-border rounded-lg p-3 bg-card text-center">
-                <div className="text-2xl font-bold">{totalContacts.toLocaleString()}</div>
-                <div className="text-xs text-muted-foreground">Total Contacts</div>
-              </div>
-            </div>
+          {monitorSubTab === "contacts" && (
+            <>
+              {summaryLoading ? (
+                <MetricsSkeleton />
+              ) : (
+                <div className="grid gap-3 grid-cols-2 md:grid-cols-5 mb-2">
+                  <div className="border border-border rounded-lg p-3 bg-card text-center">
+                    <div className="text-2xl font-bold text-green-600">{summary?.downloaded?.toLocaleString() ?? "—"}</div>
+                    <div className="text-xs text-muted-foreground">Downloaded</div>
+                  </div>
+                  <div className="border border-border rounded-lg p-3 bg-card text-center">
+                    <div className="text-2xl font-bold text-yellow-600">{summary?.pending?.toLocaleString() ?? "—"}</div>
+                    <div className="text-xs text-muted-foreground">Pending</div>
+                  </div>
+                  <div className="border border-border rounded-lg p-3 bg-card text-center">
+                    <div className="text-2xl font-bold text-blue-600">{summary?.processing?.toLocaleString() ?? "—"}</div>
+                    <div className="text-xs text-muted-foreground">Processing</div>
+                  </div>
+                  <div className="border border-border rounded-lg p-3 bg-card text-center">
+                    <div className="text-2xl font-bold text-red-600">{summary?.failed?.toLocaleString() ?? "—"}</div>
+                    <div className="text-xs text-muted-foreground">Failed</div>
+                  </div>
+                  <div className="border border-border rounded-lg p-3 bg-card text-center">
+                    <div className="text-2xl font-bold">{totalContacts.toLocaleString()}</div>
+                    <div className="text-xs text-muted-foreground">Total Contacts</div>
+                  </div>
+                </div>
+              )}
+
+              {monitorLoading ? (
+                <MetricsSkeleton />
+              ) : monitorRows.length > 0 ? (
+                <ContactCalendar rows={monitorRows} />
+              ) : (
+                <div className="text-center py-8 text-sm text-muted-foreground">No contact data available for the selected period.</div>
+              )}
+            </>
           )}
 
-          {monitorLoading ? (
-            <MetricsSkeleton />
-          ) : monitorRows.length > 0 ? (
-            <ContactCalendar rows={monitorRows} />
-          ) : (
-            <div className="text-center py-8 text-sm text-muted-foreground">No contact data available for the selected period.</div>
+          {monitorSubTab === "agents" && (
+            <>
+              <div className="grid gap-3 grid-cols-2 md:grid-cols-3 mb-2">
+                <div className="border border-border rounded-lg p-3 bg-card text-center">
+                  <div className="text-2xl font-bold text-blue-600">{agentMonitorRows.length}</div>
+                  <div className="text-xs text-muted-foreground">Days with Data</div>
+                </div>
+                <div className="border border-border rounded-lg p-3 bg-card text-center">
+                  <div className="text-2xl font-bold text-foreground">{totalAgentDays.toLocaleString()}</div>
+                  <div className="text-xs text-muted-foreground">Total Agent-Days</div>
+                </div>
+                <div className="border border-border rounded-lg p-3 bg-card text-center">
+                  <div className="text-2xl font-bold text-green-600">
+                    {agentMonitorRows.length > 0 ? Math.round(totalAgentDays / agentMonitorRows.length) : 0}
+                  </div>
+                  <div className="text-xs text-muted-foreground">Avg Agents/Day</div>
+                </div>
+              </div>
+
+              {agentMonitorLoading ? (
+                <MetricsSkeleton />
+              ) : agentMonitorRows.length > 0 ? (
+                <ContactCalendar rows={agentMonitorRows} />
+              ) : (
+                <div className="text-center py-8 text-sm text-muted-foreground">No agent activity data available for the selected period. Run the agents extraction and transform first.</div>
+              )}
+            </>
           )}
         </div>
       )}
