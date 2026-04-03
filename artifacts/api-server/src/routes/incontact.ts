@@ -1,6 +1,13 @@
 import { Router, type IRouter } from "express";
 import { z } from "zod";
 import { getGcpSecretManagerClient, getSecretValue, getBigQueryClient } from "../services/gcp-clients";
+import { db } from "@workspace/db";
+import {
+  sourceSystemTable,
+  endpointDefinitionTable,
+  endpointParameterTable,
+} from "@workspace/db/schema";
+import { eq } from "drizzle-orm";
 
 interface EndpointParam {
   name: string;
@@ -364,6 +371,115 @@ router.post("/incontact/sync-dispositions", async (_req, res) => {
   } catch (err: any) {
     console.error("[incontact/sync-dispositions]", err.message);
     res.status(500).json({ error: err.message || "Failed to sync dispositions" });
+  }
+});
+
+router.post("/incontact/seed-agents-endpoint", async (_req, res) => {
+  try {
+    const SOURCE_SYSTEM_ID = "nice-cxone";
+    const ENDPOINT_ID = "nice-cxone-agents-performance";
+
+    const [existingSource] = await db
+      .select()
+      .from(sourceSystemTable)
+      .where(eq(sourceSystemTable.sourceSystemId, SOURCE_SYSTEM_ID))
+      .limit(1);
+
+    if (!existingSource) {
+      await db.insert(sourceSystemTable).values({
+        sourceSystemId: SOURCE_SYSTEM_ID,
+        sourceSystemName: "NICE CXone",
+        baseUrl: "https://api-na1.niceincontact.com",
+        authType: "OAUTH2_CLIENT_CREDENTIALS",
+        secretManagerSecretName: "nice-cxone-api-credentials",
+        isActive: true,
+      });
+    }
+
+    const [existingEndpoint] = await db
+      .select()
+      .from(endpointDefinitionTable)
+      .where(eq(endpointDefinitionTable.endpointId, ENDPOINT_ID))
+      .limit(1);
+
+    if (!existingEndpoint) {
+      await db.insert(endpointDefinitionTable).values({
+        endpointId: ENDPOINT_ID,
+        sourceSystemId: SOURCE_SYSTEM_ID,
+        endpointName: "Agents Performance",
+        httpMethod: "GET",
+        relativePath: "/incontactapi/services/v27.0/agents/performance",
+        paginationStrategy: "NONE",
+        paginationConfigJson: null,
+        incrementalStrategy: "DATE_WINDOW",
+        incrementalConfigJson: {
+          startDateParam: "startDate",
+          endDateParam: "endDate",
+          dateFormat: "YYYY-MM-DDTHH:mm:ssZ",
+          safetyLagMinutes: 15,
+        },
+        rateLimitConfigJson: { maxRetries: 3, maxBackoffMs: 60000, backoffStrategy: "EXPONENTIAL", initialBackoffMs: 1000, requestsPerSecond: 5 },
+        isActive: true,
+      });
+    }
+
+    const paramDefs = [
+      { id: "agents-perf-startDate", name: "startDate", label: "Start Date", location: "QUERY", dataType: "DATETIME", required: true, order: 1, help: "ISO 8601 beginning of report interval" },
+      { id: "agents-perf-endDate", name: "endDate", label: "End Date", location: "QUERY", dataType: "DATETIME", required: true, order: 2, help: "ISO 8601 end of report interval (must use T00:00:00Z quarter-hour boundary)" },
+    ];
+
+    for (const p of paramDefs) {
+      const [existing] = await db
+        .select()
+        .from(endpointParameterTable)
+        .where(eq(endpointParameterTable.endpointParameterId, p.id))
+        .limit(1);
+
+      if (!existing) {
+        await db.insert(endpointParameterTable).values({
+          endpointParameterId: p.id,
+          endpointId: ENDPOINT_ID,
+          parameterName: p.name,
+          parameterLabel: p.label,
+          parameterLocation: p.location,
+          dataType: p.dataType,
+          isRequired: p.required,
+          helpText: p.help,
+          displayOrder: p.order,
+          isActive: true,
+        });
+      }
+    }
+
+    res.json({
+      message: "Agents performance endpoint seeded successfully",
+      sourceSystemId: SOURCE_SYSTEM_ID,
+      endpointId: ENDPOINT_ID,
+      created: !existingEndpoint,
+    });
+  } catch (err: any) {
+    console.error("[incontact/seed-agents-endpoint]", err.message);
+    res.status(500).json({ error: err.message || "Failed to seed agents endpoint" });
+  }
+});
+
+router.get("/incontact/agents-last-run", async (_req, res) => {
+  try {
+    const { sql } = await import("drizzle-orm");
+    const { extractionRunTable } = await import("@workspace/db/schema");
+    const { desc } = await import("drizzle-orm");
+
+    const [lastRun] = await db
+      .select()
+      .from(extractionRunTable)
+      .where(eq(extractionRunTable.endpointId, "nice-cxone-agents-performance"))
+      .orderBy(desc(extractionRunTable.createdTs))
+      .limit(1);
+
+    res.json({ data: lastRun ?? null });
+  } catch (err: any) {
+    console.error("[incontact/agents-last-run]", err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 

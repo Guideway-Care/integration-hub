@@ -1,9 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Users,
   CheckCircle,
+  CheckCircle2,
   XCircle,
   Loader2,
   Play,
@@ -13,10 +14,10 @@ import {
   ArrowRight,
   Copy,
   Check,
-  Download,
   Search,
   ChevronLeft,
   ChevronRight,
+  Database,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -45,6 +46,21 @@ interface AgentPerformance {
   loginTime: string;
   workingRate: string;
   occupancy: string;
+}
+
+interface LastRun {
+  runId: string;
+  status: string;
+  runType: string;
+  windowStartTs: string | null;
+  windowEndTs: string | null;
+  pageCount: number;
+  apiCallCount: number;
+  errorCount: number;
+  startedTs: string | null;
+  endedTs: string | null;
+  cloudRunExecutionId: string | null;
+  errorSummary: string | null;
 }
 
 function parseDuration(iso: string): number {
@@ -89,6 +105,7 @@ function PipelineStep({
   status,
   onRun,
   isRunning,
+  runLabel,
   children,
 }: {
   number: number;
@@ -97,6 +114,7 @@ function PipelineStep({
   status: "idle" | "running" | "success" | "error";
   onRun: () => void;
   isRunning: boolean;
+  runLabel?: string;
   children?: React.ReactNode;
 }) {
   const statusIcon = {
@@ -127,7 +145,7 @@ function PipelineStep({
           ) : (
             <Play className="w-3 h-3" />
           )}
-          Run Now
+          {runLabel || "Run Now"}
         </button>
       </div>
       {children && <div className="p-4">{children}</div>}
@@ -135,12 +153,13 @@ function PipelineStep({
   );
 }
 
-type Tab = "retrieve" | "results";
+type Tab = "pipeline" | "results";
 
 export default function AgentsPage() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const [tab, setTab] = useState<Tab>("retrieve");
+  const [tab, setTab] = useState<Tab>("pipeline");
+  const [seeded, setSeeded] = useState(false);
 
   const [dateRange, setDateRange] = useState(() => {
     const yesterday = new Date();
@@ -159,7 +178,67 @@ export default function AgentsPage() {
   const [showInactive, setShowInactive] = useState(false);
   const pageSize = 50;
 
-  const fetchMutation = useMutation({
+  const seedMutation = useMutation({
+    mutationFn: () => api.post<any>("/incontact/seed-agents-endpoint"),
+    onSuccess: (data: any) => {
+      setSeeded(true);
+      toast({ title: "Endpoint configured", description: data.message || "Agents performance endpoint ready" });
+      queryClient.invalidateQueries({ queryKey: ["agents-last-run"] });
+    },
+    onError: (err) => {
+      toast({ title: "Setup failed", description: (err as Error).message, variant: "destructive" });
+    },
+  });
+
+  useEffect(() => {
+    if (!seeded) {
+      seedMutation.mutate();
+    }
+  }, []);
+
+  const { data: lastRunData, isLoading: lastRunLoading } = useQuery({
+    queryKey: ["agents-last-run"],
+    queryFn: () => api.get<{ data: LastRun | null }>("/incontact/agents-last-run"),
+    refetchInterval: (query) => {
+      const run = query.state.data?.data;
+      if (run && (run.status === "PENDING" || run.status === "RUNNING")) return 5000;
+      return false;
+    },
+  });
+  const lastRun = lastRunData?.data ?? null;
+
+  const fetchRunMutation = useMutation({
+    mutationFn: () => {
+      const startDate = `${dateRange.startDate}T00:00:00Z`;
+      const endD = new Date(dateRange.endDate + "T00:00:00Z");
+      endD.setUTCDate(endD.getUTCDate() + 1);
+      const endDate = endD.toISOString().replace(".000Z", "Z");
+
+      return api.post<any>("/runs", {
+        sourceSystemId: "nice-cxone",
+        endpointId: "nice-cxone-agents-performance",
+        runType: "MANUAL",
+        requestedBy: "control-plane",
+        windowStartTs: startDate,
+        windowEndTs: endDate,
+      });
+    },
+    onSuccess: (data: any) => {
+      const runId = data?.data?.runId ?? "unknown";
+      const execId = data?.data?.cloudRunExecutionId;
+      toast({
+        title: "Extraction run created",
+        description: `Run ${runId.slice(0, 8)}... ${execId ? "triggered successfully" : "created (job trigger pending)"}`,
+      });
+      queryClient.invalidateQueries({ queryKey: ["agents-last-run"] });
+      queryClient.invalidateQueries({ queryKey: ["runs"] });
+    },
+    onError: (err) => {
+      toast({ title: "Failed to create extraction run", description: (err as Error).message, variant: "destructive" });
+    },
+  });
+
+  const previewMutation = useMutation({
     mutationFn: () => {
       const startDate = `${dateRange.startDate}T00:00:00Z`;
       const endD = new Date(dateRange.endDate + "T00:00:00Z");
@@ -177,15 +256,18 @@ export default function AgentsPage() {
       setPage(0);
       const active = perf.filter((a: AgentPerformance) => a.totalHandled !== "0" || a.loginTime !== "PT0S");
       toast({
-        title: "Agent data retrieved",
+        title: "Preview loaded",
         description: `${perf.length} agents found, ${active.length} with activity`,
       });
       setTab("results");
     },
     onError: (err) => {
-      toast({ title: "Failed to retrieve agent data", description: (err as Error).message, variant: "destructive" });
+      toast({ title: "Preview failed", description: (err as Error).message, variant: "destructive" });
     },
   });
+
+  const runStatus = lastRun?.status;
+  const isRunActive = runStatus === "PENDING" || runStatus === "RUNNING";
 
   const filtered = (agentData ?? [])
     .filter((a) => {
@@ -245,7 +327,7 @@ export default function AgentsPage() {
     sortField === field ? (sortDir === "desc" ? " ▼" : " ▲") : "";
 
   const tabs: { id: Tab; label: string }[] = [
-    { id: "retrieve", label: "Retrieve" },
+    { id: "pipeline", label: "Pipeline" },
     { id: "results", label: "Results" },
   ];
 
@@ -264,7 +346,7 @@ export default function AgentsPage() {
         <div className="flex items-center gap-2">
           <button
             onClick={() => {
-              queryClient.invalidateQueries();
+              queryClient.invalidateQueries({ queryKey: ["agents-last-run"] });
             }}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-border rounded-md text-xs hover:bg-muted"
           >
@@ -296,17 +378,23 @@ export default function AgentsPage() {
         </div>
       </div>
 
-      {tab === "retrieve" && (
+      {tab === "pipeline" && (
         <div className="space-y-4">
           <PipelineStep
             number={1}
-            title="Select Date Range"
-            description="Choose the reporting period for agent performance data"
-            status="idle"
-            onRun={() => {}}
-            isRunning={false}
+            title="Retrieve Agent Performance"
+            description="Fetch performance metrics from NICE CXone API and store raw payload in BigQuery api_payload table"
+            status={
+              fetchRunMutation.isPending || isRunActive ? "running" :
+              lastRun?.status === "COMPLETED" ? "success" :
+              lastRun?.status === "FAILED" ? "error" :
+              "idle"
+            }
+            onRun={() => fetchRunMutation.mutate()}
+            isRunning={fetchRunMutation.isPending || isRunActive}
+            runLabel="Extract"
           >
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 mb-3">
               <div>
                 <label className="block text-xs font-medium mb-1">Start Date</label>
                 <input
@@ -326,6 +414,68 @@ export default function AgentsPage() {
                 />
               </div>
             </div>
+
+            {lastRun && (
+              <div className="p-3 bg-muted/50 border border-border rounded-md text-xs space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="font-medium">Last Extraction</span>
+                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${
+                    lastRun.status === "COMPLETED" ? "bg-green-100 text-green-700" :
+                    lastRun.status === "FAILED" ? "bg-red-100 text-red-700" :
+                    lastRun.status === "RUNNING" ? "bg-blue-100 text-blue-700" :
+                    lastRun.status === "PENDING" ? "bg-yellow-100 text-yellow-700" :
+                    "bg-gray-100 text-gray-700"
+                  }`}>
+                    {lastRun.status === "COMPLETED" ? <CheckCircle2 className="w-3 h-3" /> :
+                     lastRun.status === "FAILED" ? <XCircle className="w-3 h-3" /> :
+                     (lastRun.status === "RUNNING" || lastRun.status === "PENDING") ? <Loader2 className="w-3 h-3 animate-spin" /> :
+                     <Clock className="w-3 h-3" />}
+                    {lastRun.status}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-muted-foreground">
+                  <div>
+                    <span className="font-medium text-foreground">Run ID: </span>
+                    {lastRun.runId?.slice(0, 8)}...
+                  </div>
+                  <div>
+                    <span className="font-medium text-foreground">Window: </span>
+                    {lastRun.windowStartTs
+                      ? new Date(lastRun.windowStartTs).toLocaleDateString(undefined, { timeZone: "UTC" })
+                      : "—"}
+                    {" → "}
+                    {lastRun.windowEndTs
+                      ? new Date(lastRun.windowEndTs).toLocaleDateString(undefined, { timeZone: "UTC" })
+                      : "—"}
+                  </div>
+                  <div>
+                    <span className="font-medium text-foreground">Pages / Errors: </span>
+                    {lastRun.pageCount} / {lastRun.errorCount}
+                  </div>
+                  <div>
+                    <span className="font-medium text-foreground">Completed: </span>
+                    {lastRun.endedTs ? new Date(lastRun.endedTs).toLocaleString() : "—"}
+                  </div>
+                </div>
+                {lastRun.errorSummary && (
+                  <div className="text-red-600 mt-1">Error: {lastRun.errorSummary}</div>
+                )}
+              </div>
+            )}
+
+            {fetchRunMutation.isSuccess && (
+              <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-md text-xs text-green-700">
+                Extraction run created. Run ID: {(fetchRunMutation.data as any)?.data?.runId?.slice(0, 8)}...
+                {(fetchRunMutation.data as any)?.data?.cloudRunExecutionId && (
+                  <span> — Cloud Run Job triggered</span>
+                )}
+              </div>
+            )}
+            {fetchRunMutation.isError && (
+              <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-md text-xs text-red-700">
+                {(fetchRunMutation.error as Error).message}
+              </div>
+            )}
           </PipelineStep>
 
           <div className="flex justify-center">
@@ -334,13 +484,14 @@ export default function AgentsPage() {
 
           <PipelineStep
             number={2}
-            title="Retrieve Agent Performance"
-            description="Fetch performance metrics for all agents from the NICE CXone Reporting API"
-            status={fetchMutation.isPending ? "running" : fetchMutation.isSuccess ? "success" : fetchMutation.isError ? "error" : "idle"}
-            onRun={() => fetchMutation.mutate()}
-            isRunning={fetchMutation.isPending}
+            title="Preview Results"
+            description="Load agent performance data from the API for review (does not store to BigQuery)"
+            status={previewMutation.isPending ? "running" : agentData ? "success" : "idle"}
+            onRun={() => previewMutation.mutate()}
+            isRunning={previewMutation.isPending}
+            runLabel="Preview"
           >
-            {fetchMutation.isSuccess && summaryStats && (
+            {agentData && summaryStats && (
               <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                 <div className="text-center p-3 bg-muted/50 rounded-lg">
                   <div className="text-2xl font-bold text-foreground">{summaryStats.total}</div>
@@ -366,29 +517,10 @@ export default function AgentsPage() {
                 </div>
               </div>
             )}
-            {fetchMutation.isError && (
+            {previewMutation.isError && (
               <div className="p-3 bg-red-50 border border-red-200 rounded-md text-xs text-red-700">
-                {(fetchMutation.error as Error).message}
+                {(previewMutation.error as Error).message}
               </div>
-            )}
-          </PipelineStep>
-
-          <div className="flex justify-center">
-            <ArrowRight className="w-5 h-5 text-muted-foreground rotate-90" />
-          </div>
-
-          <PipelineStep
-            number={3}
-            title="Review Results"
-            description="View the agent performance data table, filter, sort, and export"
-            status={agentData ? "success" : "idle"}
-            onRun={() => setTab("results")}
-            isRunning={false}
-          >
-            {agentData && (
-              <p className="text-sm text-muted-foreground">
-                {agentData.length} agents loaded. Click "Run Now" or switch to the Results tab to view the data.
-              </p>
             )}
           </PipelineStep>
         </div>
@@ -399,7 +531,7 @@ export default function AgentsPage() {
           {!agentData ? (
             <div className="text-center py-12 text-muted-foreground">
               <Users className="w-12 h-12 mx-auto mb-3 opacity-30" />
-              <p className="text-sm">No data loaded yet. Go to the Retrieve tab and fetch agent performance data first.</p>
+              <p className="text-sm">No data loaded yet. Go to the Pipeline tab and run a preview to see results here.</p>
             </div>
           ) : (
             <>
