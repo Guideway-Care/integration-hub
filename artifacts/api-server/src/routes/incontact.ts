@@ -189,50 +189,17 @@ router.get("/incontact/endpoints", (_req, res) => {
 
 router.post("/incontact/auth-test", async (_req, res) => {
   try {
-    const { token, resourceServerBaseUri, tokenMeta } = await getInContactBearerToken();
+    const { token, resourceServerBaseUri, apiBaseUri } = await getInContactBearerToken();
     res.json({
       authenticated: true,
       resourceServerBaseUri,
-      tokenMeta,
+      apiBaseUri,
       tokenLength: token.length,
       timestamp: new Date().toISOString(),
     });
   } catch (err: any) {
     console.error("[incontact/auth-test]", err.message);
     res.status(500).json({ error: "Authentication failed — check that your Client ID and Secret are valid access keys" });
-  }
-});
-
-router.get("/incontact/debug-dispositions", async (_req, res) => {
-  try {
-    const { token, resourceServerBaseUri, apiBaseUri, tokenMeta } = await getInContactBearerToken();
-    const baseUris = [
-      { label: "resourceServerBaseUri", url: resourceServerBaseUri },
-      { label: "apiBaseUri (derived)", url: apiBaseUri },
-    ];
-    const pathSuffixes = [
-      "/incontactapi/services/v28.0/dispositions",
-      "/incontactapi/services/v24.0/dispositions",
-      "/incontactapi/services/v19.0/dispositions",
-      "/incontactapi/services/v12.0/dispositions",
-    ];
-    const results: any[] = [];
-    for (const base of baseUris) {
-      for (const p of pathSuffixes) {
-        const fullUrl = `${base.url}${p}`;
-        try {
-          const r = await fetch(fullUrl, { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } });
-          const ct = r.headers.get("content-type") || "";
-          const body = ct.includes("json") ? await r.json() : (await r.text()).slice(0, 200);
-          results.push({ base: base.label, baseUrl: base.url, path: p, status: r.status, body: typeof body === "string" ? body : JSON.stringify(body).slice(0, 300) });
-        } catch (e: any) {
-          results.push({ base: base.label, baseUrl: base.url, path: p, status: "error", body: e.message });
-        }
-      }
-    }
-    res.json({ resourceServerBaseUri, apiBaseUri, tokenMeta, results });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
   }
 });
 
