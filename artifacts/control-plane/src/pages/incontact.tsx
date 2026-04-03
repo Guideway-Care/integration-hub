@@ -655,7 +655,13 @@ export default function InContactPage() {
         if (!v.trim()) return;
         const def = paramDefs.find((p) => p.name === k);
         if (def?.type === "date" && /^\d{4}-\d{2}-\d{2}$/.test(v.trim())) {
-          params[k] = k.toLowerCase().includes("end") ? `${v.trim()}T23:59:59Z` : `${v.trim()}T00:00:00Z`;
+          if (k.toLowerCase().includes("end")) {
+            const d = new Date(v.trim() + "T00:00:00Z");
+            d.setUTCDate(d.getUTCDate() + 1);
+            params[k] = d.toISOString().replace(".000Z", "Z");
+          } else {
+            params[k] = `${v.trim()}T00:00:00Z`;
+          }
         } else {
           params[k] = v.trim();
         }
