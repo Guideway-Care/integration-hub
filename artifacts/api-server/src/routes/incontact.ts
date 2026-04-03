@@ -75,16 +75,13 @@ const ENDPOINT_DEFS: EndpointDef[] = [
     ],
   },
   {
-    path: "/incontactapi/services/v30.0/contacts/state-history",
+    path: "/incontactapi/services/v27.0/contacts/{contactId}/statehistory",
     name: "Contact State History",
-    description: "Retrieve state history for contacts, showing how contacts transitioned through different states.",
+    description: "Retrieve the state history for a specific contact, showing how it transitioned through different states (e.g., routing, queued, active, disconnected).",
     method: "GET",
     category: "Contacts",
     params: [
-      { name: "updatedSince", label: "Updated Since", type: "string", placeholder: "2026-04-01T00:00:00Z", description: "Only return records updated after this timestamp" },
-      { name: "fields", label: "Fields", type: "string", placeholder: "contactId,state", description: "Comma-separated list of fields to return" },
-      { name: "skip", label: "Skip", type: "number", placeholder: "0", description: "Number of records to skip (pagination)" },
-      { name: "top", label: "Top", type: "number", placeholder: "1000", description: "Max records to return" },
+      { name: "contactId", label: "Contact ID", type: "string", required: true, placeholder: "698822631732", description: "The numeric contact ID to retrieve state history for" },
     ],
   },
   {
@@ -114,8 +111,15 @@ const ENDPOINT_DEFS: EndpointDef[] = [
 
 const ALLOWED_ENDPOINTS = ENDPOINT_DEFS.map((e) => e.path);
 
+function isEndpointAllowed(endpoint: string): boolean {
+  return ALLOWED_ENDPOINTS.some((allowed) => {
+    const pattern = allowed.replace(/\{[^}]+\}/g, "[^/]+");
+    return new RegExp(`^${pattern}$`).test(endpoint) || allowed === endpoint;
+  });
+}
+
 const fetchBodySchema = z.object({
-  endpoint: z.string().refine((val) => ALLOWED_ENDPOINTS.includes(val), {
+  endpoint: z.string().refine((val) => isEndpointAllowed(val), {
     message: "Endpoint not in allowlist",
   }),
   params: z.record(z.string()).optional(),
@@ -193,10 +197,20 @@ router.post("/incontact/fetch", async (req, res) => {
     const { token, resourceServerBaseUri } = await getInContactBearerToken();
     const { endpoint, params } = parsed.data;
 
-    const url = new URL(`${resourceServerBaseUri}${endpoint}`);
+    let resolvedPath = endpoint;
+    const queryParams: Record<string, string> = {};
     if (params) {
-      Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
+      Object.entries(params).forEach(([k, v]) => {
+        if (resolvedPath.includes(`{${k}}`)) {
+          resolvedPath = resolvedPath.replace(`{${k}}`, encodeURIComponent(v));
+        } else {
+          queryParams[k] = v;
+        }
+      });
     }
+
+    const url = new URL(`${resourceServerBaseUri}${resolvedPath}`);
+    Object.entries(queryParams).forEach(([k, v]) => url.searchParams.set(k, v));
 
     console.log(`[incontact/fetch] URL: ${url.toString()}`);
 
@@ -262,7 +276,7 @@ router.post("/incontact/sync-dispositions", async (_req, res) => {
     const { token, resourceServerBaseUri } = await getInContactBearerToken();
     const bq = getBigQueryClient();
 
-    const endpointPath = "/incontactapi/services/v30.0/dispositions";
+    const endpointPath = ENDPOINT_DEFS.find(e => e.name === "Dispositions")!.path;
     let allDispositions: any[] = [];
     let skip = 0;
     const top = 1000;
