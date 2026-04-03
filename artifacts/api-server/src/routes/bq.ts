@@ -649,6 +649,7 @@ async function runAgentsTransformPipeline() {
         sourceFormat: "AVRO",
         writeDisposition: "WRITE_TRUNCATE",
         useAvroLogicalTypes: true,
+        autodetect: true,
       }
     );
     console.log("[agents-transform] Step 3 complete, load status:", loadJob.status?.state);
