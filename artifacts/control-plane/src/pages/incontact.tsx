@@ -697,7 +697,7 @@ export default function InContactPage() {
   
 
   const tabs: { id: Tab; label: string }[] = [
-    { id: "pipeline", label: "Pipeline" },
+    { id: "pipeline", label: "Contacts" },
     { id: "monitor", label: "Monitor" },
     { id: "staging", label: "Staging Queue" },
     { id: "recordings", label: "Recordings" },
@@ -711,7 +711,7 @@ export default function InContactPage() {
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
             <Phone className="w-6 h-6" />
-            InContact Pipeline
+            InContact
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
             End-to-end call recording ingestion from NICE CXone
