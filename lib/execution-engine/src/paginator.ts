@@ -55,7 +55,7 @@ function countRecords(body: unknown): number {
   if (Array.isArray(body)) return body.length;
   if (typeof body === "object" && body !== null) {
     const obj = body as Record<string, unknown>;
-    for (const key of ["data", "records", "items", "results", "contacts", "completedContacts", "values"]) {
+    for (const key of ["data", "records", "items", "results", "contacts", "completedContacts", "values", "agentPerformance"]) {
       if (Array.isArray(obj[key])) return (obj[key] as unknown[]).length;
     }
   }
