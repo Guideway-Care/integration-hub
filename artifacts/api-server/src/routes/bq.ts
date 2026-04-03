@@ -652,7 +652,9 @@ async function runAgentsTransformPipeline() {
         autodetect: true,
       }
     );
-    console.log("[agents-transform] Step 3 complete, load status:", loadJob.status?.state);
+    const loadStatus = loadJob?.status?.state || "UNKNOWN";
+    const totalRows = loadJob?.statistics?.load?.outputRows || null;
+    console.log("[agents-transform] Step 3 complete, load status:", loadStatus, "rows:", totalRows);
 
     const durationMs = Date.now() - startTime;
 
@@ -663,9 +665,6 @@ async function runAgentsTransformPipeline() {
     } catch (cleanupErr: any) {
       console.warn("[agents-transform] Cleanup warning:", cleanupErr.message);
     }
-
-    const loadMeta = await loadJob.getMetadata();
-    const totalRows = loadMeta[0]?.statistics?.load?.outputRows || null;
 
     agentsTransformJob = {
       status: "completed",
