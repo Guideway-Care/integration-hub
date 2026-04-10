@@ -639,11 +639,11 @@ async function runAgentsTransformPipeline() {
     );
     console.log("[agents-transform] Export complete, status:", exportJob.status?.state);
 
-    agentsTransformJob.step = "Step 3/3: Loading into target table...";
-    console.log("[agents-transform] Step 3: Load GCS → incontact.agent_activity (US)");
+    agentsTransformJob.step = "Step 3/4: Loading into staging table...";
+    console.log("[agents-transform] Step 3: Load GCS → incontact.agent_activity_staging (US)");
     const incontactDataset = bqUS.dataset("incontact");
-    const targetTable = incontactDataset.table("agent_activity");
-    const [loadJob] = await targetTable.load(
+    const stagingTable = incontactDataset.table("agent_activity_staging");
+    const [loadJob] = await stagingTable.load(
       gcs.bucket(gcsBucket).file(`${gcsPrefix}/data_*.avro`),
       {
         sourceFormat: "AVRO",
@@ -654,7 +654,63 @@ async function runAgentsTransformPipeline() {
     );
     const loadStatus = loadJob?.status?.state || "UNKNOWN";
     const totalRows = loadJob?.statistics?.load?.outputRows || null;
-    console.log("[agents-transform] Step 3 complete, load status:", loadStatus, "rows:", totalRows);
+    console.log("[agents-transform] Step 3 complete, staging load status:", loadStatus, "rows:", totalRows);
+
+    agentsTransformJob.step = "Step 4/4: Merging into final table (dedup by agent_id + start_date)...";
+    console.log("[agents-transform] Step 4: MERGE staging → incontact.agent_activity");
+    const createIfNotExistsQuery = `
+      CREATE TABLE IF NOT EXISTS \`${projectId}.incontact.agent_activity\` AS
+      SELECT * FROM \`${projectId}.incontact.agent_activity_staging\` WHERE FALSE
+    `;
+    const [createJob] = await bqUS.createQueryJob({ query: createIfNotExistsQuery });
+    await createJob.getQueryResults();
+    console.log("[agents-transform] Ensured agent_activity table exists");
+
+    const mergeQuery = `
+      MERGE \`${projectId}.incontact.agent_activity\` AS target
+      USING \`${projectId}.incontact.agent_activity_staging\` AS source
+      ON target.agent_id = source.agent_id AND target.start_date = source.start_date
+      WHEN MATCHED THEN
+        UPDATE SET
+          team_id = source.team_id,
+          agent_offered = source.agent_offered,
+          inbound_handled = source.inbound_handled,
+          inbound_time_seconds = source.inbound_time_seconds,
+          inbound_talk_time_seconds = source.inbound_talk_time_seconds,
+          inbound_avg_talk_time_seconds = source.inbound_avg_talk_time_seconds,
+          outbound_handled = source.outbound_handled,
+          outbound_time_seconds = source.outbound_time_seconds,
+          outbound_talk_time_seconds = source.outbound_talk_time_seconds,
+          outbound_avg_talk_time_seconds = source.outbound_avg_talk_time_seconds,
+          total_handled = source.total_handled,
+          total_talk_time_seconds = source.total_talk_time_seconds,
+          total_avg_talk_time_seconds = source.total_avg_talk_time_seconds,
+          total_avg_handle_time_seconds = source.total_avg_handle_time_seconds,
+          consult_time_seconds = source.consult_time_seconds,
+          available_time_seconds = source.available_time_seconds,
+          unavailable_time_seconds = source.unavailable_time_seconds,
+          acw_time_seconds = source.acw_time_seconds,
+          refused = source.refused,
+          percent_refused = source.percent_refused,
+          login_time_seconds = source.login_time_seconds,
+          working_rate = source.working_rate,
+          occupancy = source.occupancy,
+          end_date = source.end_date,
+          run_id = source.run_id,
+          ingested_ts = source.ingested_ts
+      WHEN NOT MATCHED THEN
+        INSERT ROW
+    `;
+    const [mergeJob] = await bqUS.createQueryJob({ query: mergeQuery });
+    await mergeJob.getQueryResults();
+    console.log("[agents-transform] Step 4 complete: MERGE done");
+
+    try {
+      await stagingTable.delete();
+      console.log("[agents-transform] Cleaned up staging table");
+    } catch (e: any) {
+      console.warn("[agents-transform] Staging cleanup warning:", e.message);
+    }
 
     const durationMs = Date.now() - startTime;
 
