@@ -807,26 +807,37 @@ export default function InContactPage() {
   const isAgentsRunActive = agentsLastRun?.status === "PENDING" || agentsLastRun?.status === "RUNNING";
 
   const fetchAgentsRunMutation = useMutation({
-    mutationFn: () => {
-      const startDate = `${agentDateRange.startDate}T00:00:00Z`;
-      const endD = new Date(agentDateRange.endDate + "T00:00:00Z");
-      endD.setUTCDate(endD.getUTCDate() + 1);
-      const endDate = endD.toISOString().replace(".000Z", "Z");
-      return api.post<any>("/runs", {
-        sourceSystemId: "nice-cxone",
-        endpointId: "nice-cxone-agents-performance",
-        runType: "MANUAL",
-        requestedBy: "control-plane",
-        windowStartTs: startDate,
-        windowEndTs: endDate,
-      });
+    mutationFn: async () => {
+      const start = new Date(agentDateRange.startDate + "T00:00:00Z");
+      const end = new Date(agentDateRange.endDate + "T00:00:00Z");
+      const days: { startDate: string; endDate: string }[] = [];
+      const current = new Date(start);
+      while (current <= end) {
+        const dayStart = current.toISOString().replace(".000Z", "Z");
+        const nextDay = new Date(current);
+        nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+        const dayEnd = nextDay.toISOString().replace(".000Z", "Z");
+        days.push({ startDate: dayStart, endDate: dayEnd });
+        current.setUTCDate(current.getUTCDate() + 1);
+      }
+      const results = [];
+      for (const day of days) {
+        const result = await api.post<any>("/runs", {
+          sourceSystemId: "nice-cxone",
+          endpointId: "nice-cxone-agents-performance",
+          runType: "MANUAL",
+          requestedBy: "control-plane",
+          windowStartTs: day.startDate,
+          windowEndTs: day.endDate,
+        });
+        results.push(result);
+      }
+      return { results, dayCount: days.length };
     },
     onSuccess: (data: any) => {
-      const runId = data?.data?.runId ?? "unknown";
-      const execId = data?.data?.cloudRunExecutionId;
       toast({
-        title: "Extraction run created",
-        description: `Run ${runId.slice(0, 8)}... ${execId ? "triggered successfully" : "created (job trigger pending)"}`,
+        title: "Extraction runs created",
+        description: `${data.dayCount} day(s) queued for extraction`,
       });
       queryClient.invalidateQueries({ queryKey: ["agents-last-run"] });
       queryClient.invalidateQueries({ queryKey: ["runs"] });
