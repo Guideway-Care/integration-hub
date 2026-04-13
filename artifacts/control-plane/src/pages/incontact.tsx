@@ -264,7 +264,9 @@ function ContactCalendar({ rows }: { rows: DailyCount[] }) {
   const sortedMonths = [...months.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   const totalPages = Math.max(1, Math.ceil(sortedMonths.length / MONTHS_PER_PAGE));
   const activePage = monthPage ?? totalPages - 1;
-  const visibleMonths = sortedMonths.slice(activePage * MONTHS_PER_PAGE, (activePage + 1) * MONTHS_PER_PAGE);
+  const endIdx = sortedMonths.length - (totalPages - 1 - activePage) * MONTHS_PER_PAGE;
+  const startIdx = Math.max(0, endIdx - MONTHS_PER_PAGE);
+  const visibleMonths = sortedMonths.slice(startIdx, endIdx);
 
   function getCellColor(count: number, dow: number): string {
     const avg = dowAvg[dow];
