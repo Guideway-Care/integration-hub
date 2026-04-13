@@ -837,40 +837,32 @@ export default function InContactPage() {
     },
   });
   const agentsLastRun = agentsLastRunData?.data ?? null;
-  const isAgentsRunActive = agentsLastRun?.status === "PENDING" || agentsLastRun?.status === "RUNNING";
+
+  const { data: agentsDailyStatus } = useQuery({
+    queryKey: ["agents-daily-status"],
+    queryFn: () => api.get<{ data: { status: string; totalDays: number; completedDays: number; currentDay?: string; results: any[] } }>("/incontact/extract-agents-daily/status"),
+    refetchInterval: (query) => {
+      const s = query.state.data?.data;
+      if (s && s.status === "running") return 3000;
+      return false;
+    },
+  });
+  const dailyStatus = agentsDailyStatus?.data;
+  const isDailyRunning = dailyStatus?.status === "running";
+  const isAgentsRunActive = agentsLastRun?.status === "PENDING" || agentsLastRun?.status === "RUNNING" || isDailyRunning;
 
   const fetchAgentsRunMutation = useMutation({
-    mutationFn: async () => {
-      const start = new Date(agentDateRange.startDate + "T00:00:00Z");
-      const end = new Date(agentDateRange.endDate + "T00:00:00Z");
-      const days: { startDate: string; endDate: string }[] = [];
-      const current = new Date(start);
-      while (current <= end) {
-        const dayStart = current.toISOString().replace(".000Z", "Z");
-        const nextDay = new Date(current);
-        nextDay.setUTCDate(nextDay.getUTCDate() + 1);
-        const dayEnd = nextDay.toISOString().replace(".000Z", "Z");
-        days.push({ startDate: dayStart, endDate: dayEnd });
-        current.setUTCDate(current.getUTCDate() + 1);
-      }
-      const results = [];
-      for (const day of days) {
-        const result = await api.post<any>("/runs", {
-          sourceSystemId: "nice-cxone",
-          endpointId: "nice-cxone-agents-performance",
-          runType: "MANUAL",
-          requestedBy: "control-plane",
-          windowStartTs: day.startDate,
-          windowEndTs: day.endDate,
-        });
-        results.push(result);
-      }
-      return { results, dayCount: days.length };
+    mutationFn: () => {
+      return api.post<any>("/incontact/extract-agents-daily", {
+        startDate: agentDateRange.startDate,
+        endDate: agentDateRange.endDate,
+      });
     },
     onSuccess: (data: any) => {
+      const dayCount = data?.dayCount ?? 1;
       toast({
-        title: "Extraction runs created",
-        description: `${data.dayCount} day(s) queued for extraction`,
+        title: "Agent extraction started",
+        description: `${dayCount} day(s) queued for extraction (processed sequentially)`,
       });
       queryClient.invalidateQueries({ queryKey: ["agents-last-run"] });
       queryClient.invalidateQueries({ queryKey: ["runs"] });
@@ -1351,7 +1343,30 @@ export default function InContactPage() {
                   </div>
                 </div>
 
-                {agentsLastRun && (
+                {isDailyRunning && dailyStatus && (
+                  <div className="p-3 bg-blue-50 border border-blue-200 rounded-md text-xs space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium flex items-center gap-1.5">
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-600" />
+                        Processing day {dailyStatus.completedDays + 1} of {dailyStatus.totalDays}
+                      </span>
+                      <span className="text-blue-600 font-medium">{dailyStatus.currentDay}</span>
+                    </div>
+                    <div className="w-full bg-blue-100 rounded-full h-1.5">
+                      <div
+                        className="bg-blue-600 h-1.5 rounded-full transition-all"
+                        style={{ width: `${(dailyStatus.completedDays / dailyStatus.totalDays) * 100}%` }}
+                      />
+                    </div>
+                    {dailyStatus.results.length > 0 && (
+                      <div className="text-muted-foreground">
+                        Completed: {dailyStatus.results.map((r: any) => `${r.date} (${r.status})`).join(", ")}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {!isDailyRunning && agentsLastRun && (
                   <div className="p-3 bg-muted/50 border border-border rounded-md text-xs space-y-1">
                     <div className="flex items-center justify-between">
                       <span className="font-medium">Last Extraction</span>

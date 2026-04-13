@@ -1,13 +1,14 @@
 import { Router, type IRouter } from "express";
 import { z } from "zod";
 import { getGcpSecretManagerClient, getSecretValue, getBigQueryClient } from "../services/gcp-clients";
-import { db } from "@workspace/db";
+import { db, pool } from "@workspace/db";
 import {
   sourceSystemTable,
   endpointDefinitionTable,
   endpointParameterTable,
+  extractionRunTable,
 } from "@workspace/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
 
 interface EndpointParam {
   name: string;
@@ -465,10 +466,6 @@ router.post("/incontact/seed-agents-endpoint", async (_req, res) => {
 
 router.get("/incontact/agents-last-run", async (_req, res) => {
   try {
-    const { sql } = await import("drizzle-orm");
-    const { extractionRunTable } = await import("@workspace/db/schema");
-    const { desc } = await import("drizzle-orm");
-
     const [lastRun] = await db
       .select()
       .from(extractionRunTable)
@@ -481,6 +478,175 @@ router.get("/incontact/agents-last-run", async (_req, res) => {
     console.error("[incontact/agents-last-run]", err.message);
     res.status(500).json({ error: err.message });
   }
+});
+
+const GCP_PROJECT_ID = process.env.GCP_PROJECT_ID || "guidewaycare-476802";
+const GCP_REGION = process.env.GCP_REGION || "us-central1";
+const EXTRACTION_JOB_NAME = process.env.EXTRACTION_JOB_NAME || "extraction-job";
+
+async function getAccessToken(): Promise<string> {
+  const resp = await fetch(
+    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
+    { headers: { "Metadata-Flavor": "Google" } },
+  );
+  if (!resp.ok) throw new Error(`Failed to get access token: ${resp.status}`);
+  const data = await resp.json() as { access_token: string };
+  return data.access_token;
+}
+
+async function triggerExtractionJobForRun(runId: string): Promise<string | null> {
+  try {
+    const token = await getAccessToken();
+    const url = `https://${GCP_REGION}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${GCP_PROJECT_ID}/jobs/${EXTRACTION_JOB_NAME}:run`;
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        overrides: { containerOverrides: [{ env: [{ name: "RUN_ID", value: runId }] }] },
+      }),
+    });
+    if (!resp.ok) {
+      console.error(`[agents-daily] Failed to trigger job: ${resp.status}`);
+      return null;
+    }
+    const d = await resp.json() as { metadata?: { name?: string } };
+    return d.metadata?.name ?? null;
+  } catch (err) {
+    console.error("[agents-daily] Trigger error:", err);
+    return null;
+  }
+}
+
+async function waitForRunCompletion(runId: string, timeoutMs = 120000): Promise<string> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const [run] = await db
+      .select({ status: extractionRunTable.status })
+      .from(extractionRunTable)
+      .where(eq(extractionRunTable.runId, runId))
+      .limit(1);
+    if (!run) return "NOT_FOUND";
+    if (run.status !== "PENDING" && run.status !== "RUNNING") return run.status;
+    await new Promise((r) => setTimeout(r, 5000));
+  }
+  return "TIMEOUT";
+}
+
+let agentsDailyJob: {
+  status: "idle" | "running" | "completed" | "failed";
+  totalDays: number;
+  completedDays: number;
+  currentDay?: string;
+  results: { date: string; runId: string; status: string }[];
+  error?: string;
+} = { status: "idle", totalDays: 0, completedDays: 0, results: [] };
+
+async function runAgentsDailyExtraction(startDate: string, endDate: string) {
+  const ENDPOINT_ID = "nice-cxone-agents-performance";
+  const start = new Date(startDate + "T00:00:00Z");
+  const end = new Date(endDate + "T00:00:00Z");
+  const days: { dayStart: string; dayEnd: string; label: string }[] = [];
+  const current = new Date(start);
+  while (current <= end) {
+    const dayStart = current.toISOString().replace(".000Z", "Z");
+    const nextDay = new Date(current);
+    nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+    const dayEnd = nextDay.toISOString().replace(".000Z", "Z");
+    days.push({ dayStart, dayEnd, label: current.toISOString().split("T")[0] });
+    current.setUTCDate(current.getUTCDate() + 1);
+  }
+
+  agentsDailyJob = { status: "running", totalDays: days.length, completedDays: 0, results: [] };
+
+  for (const day of days) {
+    agentsDailyJob.currentDay = day.label;
+    console.log(`[agents-daily] Processing ${day.label} (${agentsDailyJob.completedDays + 1}/${days.length})`);
+
+    try {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const lockResult = await client.query(
+          `SELECT run_id, status FROM extraction_run WHERE endpoint_id = $1 AND status IN ('PENDING', 'RUNNING') FOR UPDATE`,
+          [ENDPOINT_ID],
+        );
+        if (lockResult.rows.length > 0) {
+          await client.query("ROLLBACK");
+          console.log(`[agents-daily] Waiting for active run ${lockResult.rows[0].run_id} to finish...`);
+          const activeStatus = await waitForRunCompletion(lockResult.rows[0].run_id);
+          console.log(`[agents-daily] Active run finished with status: ${activeStatus}`);
+        } else {
+          await client.query("ROLLBACK");
+        }
+      } finally {
+        client.release();
+      }
+
+      const [created] = await db.insert(extractionRunTable).values({
+        sourceSystemId: "nice-cxone",
+        endpointId: ENDPOINT_ID,
+        runType: "MANUAL",
+        requestedBy: "control-plane-daily",
+        windowStartTs: new Date(day.dayStart),
+        windowEndTs: new Date(day.dayEnd),
+        status: "PENDING",
+      }).returning();
+
+      const execName = await triggerExtractionJobForRun(created.runId);
+      if (execName) {
+        await db.update(extractionRunTable)
+          .set({ cloudRunJobName: EXTRACTION_JOB_NAME, cloudRunExecutionId: execName })
+          .where(eq(extractionRunTable.runId, created.runId));
+      }
+
+      const finalStatus = await waitForRunCompletion(created.runId, 300000);
+      agentsDailyJob.results.push({ date: day.label, runId: created.runId, status: finalStatus });
+      agentsDailyJob.completedDays++;
+      console.log(`[agents-daily] ${day.label} finished: ${finalStatus}`);
+    } catch (err: any) {
+      console.error(`[agents-daily] ${day.label} failed:`, err.message);
+      agentsDailyJob.results.push({ date: day.label, runId: "error", status: err.message });
+      agentsDailyJob.completedDays++;
+    }
+  }
+
+  const allSuccess = agentsDailyJob.results.every((r) => r.status === "COMPLETED");
+  agentsDailyJob.status = allSuccess ? "completed" : "failed";
+  agentsDailyJob.currentDay = undefined;
+  console.log(`[agents-daily] All days done. Success: ${allSuccess}`);
+}
+
+router.post("/incontact/extract-agents-daily", async (req, res) => {
+  try {
+    const { startDate, endDate } = req.body;
+    if (!startDate || !endDate) {
+      res.status(400).json({ error: "startDate and endDate are required (YYYY-MM-DD)" });
+      return;
+    }
+    if (agentsDailyJob.status === "running") {
+      res.status(409).json({
+        error: "Daily agent extraction is already running",
+        currentDay: agentsDailyJob.currentDay,
+        progress: `${agentsDailyJob.completedDays}/${agentsDailyJob.totalDays}`,
+      });
+      return;
+    }
+
+    const start = new Date(startDate + "T00:00:00Z");
+    const end = new Date(endDate + "T00:00:00Z");
+    const dayCount = Math.round((end.getTime() - start.getTime()) / 86400000) + 1;
+
+    runAgentsDailyExtraction(startDate, endDate);
+
+    res.json({ message: "Daily agent extraction started", dayCount, startDate, endDate });
+  } catch (err: any) {
+    console.error("[incontact/extract-agents-daily]", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get("/incontact/extract-agents-daily/status", async (_req, res) => {
+  res.json({ data: agentsDailyJob });
 });
 
 export default router;
