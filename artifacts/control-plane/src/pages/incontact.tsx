@@ -233,6 +233,9 @@ const DOW_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 function ContactCalendar({ rows }: { rows: DailyCount[] }) {
+  const [monthPage, setMonthPage] = useState<number | null>(null);
+  const MONTHS_PER_PAGE = 3;
+
   const dataByDate = new Map<string, number>();
   for (const row of rows) {
     const date = typeof row.contact_date === "string" ? row.contact_date : row.contact_date?.value ?? "";
@@ -259,6 +262,9 @@ function ContactCalendar({ rows }: { rows: DailyCount[] }) {
     }
   }
   const sortedMonths = [...months.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  const totalPages = Math.max(1, Math.ceil(sortedMonths.length / MONTHS_PER_PAGE));
+  const activePage = monthPage ?? totalPages - 1;
+  const visibleMonths = sortedMonths.slice(activePage * MONTHS_PER_PAGE, (activePage + 1) * MONTHS_PER_PAGE);
 
   function getCellColor(count: number, dow: number): string {
     const avg = dowAvg[dow];
@@ -320,8 +326,33 @@ function ContactCalendar({ rows }: { rows: DailyCount[] }) {
         <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-gray-100 border border-gray-200" /> No data</span>
       </div>
 
+      {sortedMonths.length > MONTHS_PER_PAGE && (
+        <div className="flex items-center justify-between">
+          <button
+            onClick={() => setMonthPage(Math.max(0, activePage - 1))}
+            disabled={activePage === 0}
+            className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-md bg-muted text-muted-foreground hover:bg-muted/80 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            ← Older
+          </button>
+          <span className="text-xs text-muted-foreground">
+            {visibleMonths.length > 0
+              ? `${MONTH_NAMES[visibleMonths[0][1].month - 1]} ${visibleMonths[0][1].year} – ${MONTH_NAMES[visibleMonths[visibleMonths.length - 1][1].month - 1]} ${visibleMonths[visibleMonths.length - 1][1].year}`
+              : ""}
+            {" "}({activePage + 1} of {totalPages})
+          </span>
+          <button
+            onClick={() => setMonthPage(Math.min(totalPages - 1, activePage + 1))}
+            disabled={activePage >= totalPages - 1}
+            className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-md bg-muted text-muted-foreground hover:bg-muted/80 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Newer →
+          </button>
+        </div>
+      )}
+
       <div className="grid gap-4 md:grid-cols-3">
-        {sortedMonths.map(([key, { year, month }]) => {
+        {visibleMonths.map(([key, { year, month }]) => {
           const weeks = buildMonthGrid(year, month);
           return (
             <div key={key} className="border border-border rounded-lg p-3 bg-card">
