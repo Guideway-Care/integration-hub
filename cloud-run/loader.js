@@ -28,7 +28,13 @@ async function readCallListFromGCS() {
     .map((line) => line.trim())
     .filter((line) => /^\d{6,20}$/.test(line));
 
-  return callIds;
+  const uniqueIds = [...new Set(callIds)];
+  const dupCount = callIds.length - uniqueIds.length;
+  if (dupCount > 0) {
+    console.log(`Deduplicated ${dupCount} repeated call IDs from input file`);
+  }
+
+  return uniqueIds;
 }
 
 async function getExistingCallIds(callIds) {
