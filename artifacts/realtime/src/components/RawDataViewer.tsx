@@ -11,9 +11,9 @@ export function RawDataViewer({ data, title = "Raw Payload" }: RawDataViewerProp
   const [isExpanded, setIsExpanded] = useState(false);
 
   return (
-    <div className="border border-border/50 rounded-md overflow-hidden bg-black/40">
+    <div className="border border-border/50 rounded-md overflow-hidden bg-muted">
       <div 
-        className="flex items-center justify-between p-3 bg-black/60 cursor-pointer hover:bg-black/80 transition-colors"
+        className="flex items-center justify-between p-3 bg-secondary cursor-pointer hover:bg-secondary transition-colors"
         onClick={() => setIsExpanded(!isExpanded)}
       >
         <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
@@ -43,7 +43,7 @@ export function GenericTable({ data }: { data: any }) {
     return (
       <div className="overflow-x-auto">
         <table className="w-full text-sm text-left">
-          <thead className="text-xs text-muted-foreground uppercase bg-black/20">
+          <thead className="text-xs text-muted-foreground uppercase bg-muted">
             <tr>
               {keys.map((key) => (
                 <th key={key} className="px-4 py-3 font-medium">{key}</th>

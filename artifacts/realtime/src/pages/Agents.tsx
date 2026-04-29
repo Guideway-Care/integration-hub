@@ -59,7 +59,7 @@ export default function Agents() {
             <Input
               type="search"
               placeholder="Search agents, skills, states..."
-              className="pl-9 bg-black/20 border-border/50 h-9 text-sm"
+              className="pl-9 bg-muted border-border/50 h-9 text-sm"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
@@ -68,7 +68,7 @@ export default function Agents() {
         <CardContent className="p-0">
           <div className="overflow-x-auto">
             <table className="w-full text-sm text-left">
-              <thead className="text-xs text-muted-foreground uppercase bg-black/20 border-b border-border/50">
+              <thead className="text-xs text-muted-foreground uppercase bg-muted border-b border-border/50">
                 <tr>
                   <th className="px-6 py-3 font-medium">Agent</th>
                   <th className="px-6 py-3 font-medium">State</th>

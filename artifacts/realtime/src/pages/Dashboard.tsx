@@ -89,7 +89,7 @@ export default function Dashboard() {
             <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Raw Telemetry Snippet</CardTitle>
           </CardHeader>
           <CardContent className="pt-4 p-0">
-            <div className="bg-black/50 p-4 rounded-md overflow-auto text-xs font-mono text-emerald-400 h-64">
+            <div className="bg-muted p-4 rounded-md overflow-auto text-xs font-mono text-foreground h-64">
               {agents.data ? JSON.stringify(agents.data.data.slice(0, 3), null, 2) : "Waiting for telemetry..."}
             </div>
           </CardContent>

@@ -49,7 +49,7 @@ export default function Settings() {
               onValueChange={(val) => setRefreshInterval(parseInt(val, 10))}
               disabled={isPaused}
             >
-              <SelectTrigger className="w-[200px] bg-black/20 border-border/50">
+              <SelectTrigger className="w-[200px] bg-muted border-border/50">
                 <SelectValue placeholder="Select interval" />
               </SelectTrigger>
               <SelectContent>
