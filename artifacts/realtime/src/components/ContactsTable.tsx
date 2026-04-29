@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { MessageSquare, Phone, Mail, FileText, Clock, Filter, X } from "lucide-react";
+import { MessageSquare, Phone, Mail, FileText, Clock, Filter, X, ArrowDownLeft, ArrowUpRight } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -49,6 +49,19 @@ function agentLabel(c: any): string {
   return "—";
 }
 
+type Direction = "Inbound" | "Outbound" | "Unknown";
+
+function direction(c: any): Direction {
+  if (c?.isOutbound === true) return "Outbound";
+  if (c?.isOutbound === false) return "Inbound";
+  if (typeof c?.direction === "string") {
+    const d = c.direction.toLowerCase();
+    if (d.includes("out")) return "Outbound";
+    if (d.includes("in")) return "Inbound";
+  }
+  return "Unknown";
+}
+
 const ALL = "__all__";
 
 function fmtTime(v?: string): string {
@@ -64,6 +77,7 @@ export function ContactsTable({ contacts }: ContactsTableProps) {
   const [openContactId, setOpenContactId] = useState<string | null>(null);
   const [openLabel, setOpenLabel] = useState<string>("");
   const [typeFilter, setTypeFilter] = useState<string>(ALL);
+  const [directionFilter, setDirectionFilter] = useState<string>(ALL);
   const [skillFilter, setSkillFilter] = useState<string>(ALL);
   const [agentFilter, setAgentFilter] = useState<string>(ALL);
 
@@ -93,17 +107,22 @@ export function ContactsTable({ contacts }: ContactsTableProps) {
   const filtered = useMemo(() => {
     return validContacts.filter((c) => {
       if (typeFilter !== ALL && mediaLabel(c) !== typeFilter) return false;
+      if (directionFilter !== ALL && direction(c) !== directionFilter) return false;
       if (skillFilter !== ALL && skillLabel(c) !== skillFilter) return false;
       if (agentFilter !== ALL && agentLabel(c) !== agentFilter) return false;
       return true;
     });
-  }, [validContacts, typeFilter, skillFilter, agentFilter]);
+  }, [validContacts, typeFilter, directionFilter, skillFilter, agentFilter]);
 
   const anyFilterActive =
-    typeFilter !== ALL || skillFilter !== ALL || agentFilter !== ALL;
+    typeFilter !== ALL ||
+    directionFilter !== ALL ||
+    skillFilter !== ALL ||
+    agentFilter !== ALL;
 
   function clearFilters() {
     setTypeFilter(ALL);
+    setDirectionFilter(ALL);
     setSkillFilter(ALL);
     setAgentFilter(ALL);
   }
@@ -125,6 +144,12 @@ export function ContactsTable({ contacts }: ContactsTableProps) {
           value={typeFilter}
           onChange={setTypeFilter}
           options={typeOptions}
+        />
+        <FilterSelect
+          label="Direction"
+          value={directionFilter}
+          onChange={setDirectionFilter}
+          options={["Inbound", "Outbound", "Unknown"]}
         />
         <FilterSelect
           label="Skill"
@@ -162,6 +187,7 @@ export function ContactsTable({ contacts }: ContactsTableProps) {
           <thead className="text-xs text-muted-foreground uppercase bg-muted border-b border-border/50">
             <tr>
               <th className="px-4 py-3 font-medium">Type</th>
+              <th className="px-4 py-3 font-medium">Direction</th>
               <th className="px-4 py-3 font-medium">Contact ID</th>
               <th className="px-4 py-3 font-medium">From</th>
               <th className="px-4 py-3 font-medium">Skill</th>
@@ -173,7 +199,7 @@ export function ContactsTable({ contacts }: ContactsTableProps) {
           <tbody className="divide-y divide-border/30">
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-sm text-muted-foreground">
+                <td colSpan={8} className="px-4 py-8 text-center text-sm text-muted-foreground">
                   No contacts match the current filters.
                 </td>
               </tr>
@@ -213,6 +239,9 @@ export function ContactsTable({ contacts }: ContactsTableProps) {
                       <Icon className="w-4 h-4 text-muted-foreground" />
                       <span className="text-xs">{mediaLabel(c)}</span>
                     </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <DirectionBadge value={direction(c)} />
                   </td>
                   <td className="px-4 py-3 font-mono text-xs">{contactId || "—"}</td>
                   <td className="px-4 py-3 text-muted-foreground">{String(from)}</td>
@@ -270,6 +299,30 @@ interface FilterSelectProps {
   value: string;
   onChange: (v: string) => void;
   options: string[];
+}
+
+function DirectionBadge({ value }: { value: Direction }) {
+  if (value === "Inbound") {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-500/15 text-emerald-700 border border-emerald-500/30">
+        <ArrowDownLeft className="w-3 h-3" />
+        Inbound
+      </span>
+    );
+  }
+  if (value === "Outbound") {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-blue-500/15 text-blue-700 border border-blue-500/30">
+        <ArrowUpRight className="w-3 h-3" />
+        Outbound
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-muted text-muted-foreground">
+      —
+    </span>
+  );
 }
 
 function FilterSelect({ label, value, onChange, options }: FilterSelectProps) {
