@@ -23,7 +23,8 @@ Unified integration platform combining the Ingestion Controller Hub (generic API
 integration-hub/
 ├── artifacts/                  # Deployable applications
 │   ├── api-server/             # Express API server (port 8080)
-│   └── control-plane/          # React+Vite frontend dashboard
+│   ├── control-plane/          # React+Vite frontend dashboard (Integration Hub)
+│   └── realtime/               # React+Vite NICE Live Monitor (real-time ops dashboard)
 ├── lib/                        # Shared libraries
 │   ├── api-spec/               # OpenAPI spec + Orval codegen config
 │   ├── api-client-react/       # Generated React Query hooks
@@ -112,6 +113,17 @@ React + Vite frontend dashboard. "API Controller Hub" branding throughout.
 - **Toast system**: shadcn/ui toast with `useToast` hook, Toaster mounted in App.tsx
 - **API Client**: `src/lib/api.ts` — fetch wrapper proxied to API server via Vite
 - Vite proxy: `/api` → `http://0.0.0.0:8080`
+
+### `artifacts/realtime` (`@workspace/realtime`)
+
+Standalone React + Vite real-time operations dashboard for NICE CXone supervisors. Mounted at `/realtime/`. Control-room aesthetic (dark theme, cyber cyan accents). Reuses `api-server`'s `/api/incontact/fetch` proxy — no backend changes.
+
+- **Pages**: Overview (System KPIs + agent state distribution), Agents (live roster), Skills, Teams, Contacts (active calls), Settings (refresh interval / pause polling)
+- **Polling**: TanStack Query with `refetchInterval`, configurable 5s/10s/30s/60s/off via Zustand store (persisted to localStorage)
+- **Components**: `AnimatedValue` (subtle flash on value change), `RawDataViewer` (collapsible JSON fallback for unknown payload shapes), `Layout` (sidebar nav with LIVE heartbeat indicator)
+- **API hooks**: `src/hooks/use-nice-data.ts` — one query per NICE endpoint
+- **NICE endpoints used**: `/agents/states`, `/skills/activity`, `/teams/performance-summary`, `/contacts/active`
+- `pnpm --filter @workspace/realtime run dev` — dev server
 
 ### `lib/execution-engine` (`@workspace/execution-engine`)
 
