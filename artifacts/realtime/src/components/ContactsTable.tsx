@@ -67,6 +67,27 @@ function direction(c: any): Direction {
 
 const ALL = "__all__";
 
+const STARTED_FIELDS = [
+  "startDate",
+  "StartDate",
+  "contactStart",
+  "contactStartTime",
+  "contactStartHandleTime",
+  "startHandleTime",
+  "lastUpdateTime",
+  "LastUpdateTime",
+  "stateStartDate",
+  "acwStartDate",
+] as const;
+
+function pickStarted(c: any): string | undefined {
+  for (const k of STARTED_FIELDS) {
+    const v = c?.[k];
+    if (typeof v === "string" && v.trim()) return v;
+  }
+  return undefined;
+}
+
 function fmtTime(v?: string): string {
   if (!v) return "—";
   try {
@@ -245,11 +266,7 @@ export function ContactsTable({ contacts }: ContactsTableProps) {
                 (c.firstName && c.lastName ? `${c.firstName} ${c.lastName}` : null) ||
                 c.agentId ||
                 "—";
-              const started =
-                c.startDate ||
-                c.StartDate ||
-                c.contactStartTime ||
-                c.contactStart;
+              const started = pickStarted(c);
               const label = `${mediaLabel(c)} · ${contactId || "(no id)"}`;
 
               return (

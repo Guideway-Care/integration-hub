@@ -111,9 +111,13 @@ export function ContactDetailsSheet({ contact, open, onOpenChange }: ContactDeta
     contact.startDate ||
     contact.StartDate ||
     contact.contactStart ||
-    contact.contactStartTime;
+    contact.contactStartTime ||
+    contact.stateStartDate ||
+    contact.lastUpdateTime ||
+    contact.LastUpdateTime;
   const handleStart =
     contact.contactStartHandleTime || contact.startHandleTime;
+  const acwStart = contact.acwStartDate;
 
   const agentName =
     contact.agentName ||
@@ -220,6 +224,17 @@ export function ContactDetailsSheet({ contact, open, onOpenChange }: ContactDeta
                     <div>
                       <div>{fmtAbs(handleStart)}</div>
                       <div className="text-xs text-muted-foreground">{fmtRel(handleStart)}</div>
+                    </div>
+                  }
+                />
+              )}
+              {acwStart && (
+                <Row
+                  label="ACW started"
+                  value={
+                    <div>
+                      <div>{fmtAbs(acwStart)}</div>
+                      <div className="text-xs text-muted-foreground">{fmtRel(acwStart)}</div>
                     </div>
                   }
                 />
