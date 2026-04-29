@@ -157,6 +157,16 @@ const ENDPOINT_DEFS: EndpointDef[] = [
     ],
   },
   {
+    path: "/incontactapi/services/v30.0/contacts/chats/{contactId}",
+    name: "Chat Transcript",
+    description: "Retrieve the full transcript for a chat contact, including all messages exchanged between agent and customer.",
+    method: "GET",
+    category: "Contacts",
+    params: [
+      { name: "contactId", label: "Contact ID", type: "string", required: true, placeholder: "698822631732", description: "The numeric contact ID of the chat session" },
+    ],
+  },
+  {
     path: "/incontactapi/services/v30.0/skills/summary",
     name: "Skills Summary",
     description: "Get a summary of all configured skills including queue counts and service level data.",

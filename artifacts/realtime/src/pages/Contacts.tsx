@@ -2,10 +2,13 @@ import { useNiceQuery } from "@/hooks/use-nice-data";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AlertCircle, RefreshCw } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { GenericTable, RawDataViewer } from "@/components/RawDataViewer";
+import { RawDataViewer } from "@/components/RawDataViewer";
+import { ContactsTable } from "@/components/ContactsTable";
+import { extractArray } from "@/lib/api";
 
 export default function Contacts() {
   const { data: response, isLoading, isError, error, isFetching } = useNiceQuery("contacts");
+  const contacts = extractArray(response?.data);
 
   return (
     <div className="space-y-6">
@@ -33,7 +36,7 @@ export default function Contacts() {
           {isLoading && !response ? (
             <div className="p-8 text-center text-muted-foreground">Loading contact data...</div>
           ) : (
-            <GenericTable data={response?.data} />
+            <ContactsTable contacts={contacts} />
           )}
         </CardContent>
       </Card>
