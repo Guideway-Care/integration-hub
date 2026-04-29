@@ -9,6 +9,7 @@ COPY lib/api-zod/package.json lib/api-zod/
 COPY lib/api-spec/package.json lib/api-spec/
 COPY lib/api-client-react/package.json lib/api-client-react/
 COPY artifacts/control-plane/package.json artifacts/control-plane/
+COPY artifacts/realtime/package.json artifacts/realtime/
 RUN pnpm install --no-frozen-lockfile
 
 FROM base AS build
@@ -17,15 +18,19 @@ COPY --from=deps /app/lib/db/node_modules ./lib/db/node_modules
 COPY --from=deps /app/lib/api-zod/node_modules ./lib/api-zod/node_modules
 COPY --from=deps /app/lib/api-client-react/node_modules ./lib/api-client-react/node_modules
 COPY --from=deps /app/artifacts/control-plane/node_modules ./artifacts/control-plane/node_modules
+COPY --from=deps /app/artifacts/realtime/node_modules ./artifacts/realtime/node_modules
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc tsconfig.base.json tsconfig.json ./
 COPY lib/ lib/
 COPY artifacts/control-plane/ artifacts/control-plane/
+COPY artifacts/realtime/ artifacts/realtime/
 RUN npx tsc --build lib/db lib/api-zod lib/api-client-react
 RUN pnpm --filter @workspace/control-plane run build
+RUN PORT=8080 BASE_PATH=/realtime/ pnpm --filter @workspace/realtime run build
 
 FROM nginx:alpine AS runtime
 RUN apk add --no-cache gettext
 COPY --from=build /app/artifacts/control-plane/dist/public /usr/share/nginx/html
+COPY --from=build /app/artifacts/realtime/dist/public /usr/share/nginx/html/realtime
 COPY docker/nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
