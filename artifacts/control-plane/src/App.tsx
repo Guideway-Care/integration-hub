@@ -11,6 +11,7 @@ import RunDetailPage from "@/pages/run-detail";
 import RunNewPage from "@/pages/run-new";
 import MonitorPage from "@/pages/monitor";
 import InContactPage from "@/pages/incontact";
+import RealtimePage from "@/pages/realtime";
 import StagingPage from "@/pages/staging";
 import RecordingsPage from "@/pages/recordings";
 import AuditPage from "@/pages/audit";
@@ -38,6 +39,7 @@ function Router() {
         <Route path="/runs/:id" component={RunDetailPage} />
         <Route path="/monitor" component={MonitorPage} />
         <Route path="/incontact" component={InContactPage} />
+        <Route path="/realtime" component={RealtimePage} />
         <Route path="/staging" component={StagingPage} />
         <Route path="/recordings" component={RecordingsPage} />
         <Route path="/audit" component={AuditPage} />

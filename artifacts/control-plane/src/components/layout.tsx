@@ -14,11 +14,13 @@ import {
   X,
   ClipboardList,
   Download,
+  Activity,
 } from "lucide-react";
 import { useState } from "react";
 
 const navItems = [
   { label: "InContact", href: "/incontact", icon: Phone },
+  { label: "Real-Time", href: "/realtime", icon: Activity },
   { label: "Dashboard", href: "/", icon: LayoutDashboard },
   { label: "Source Systems", href: "/source-systems", icon: Server },
   { label: "Endpoints", href: "/endpoints", icon: Plug },

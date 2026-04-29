@@ -121,6 +121,42 @@ const ENDPOINT_DEFS: EndpointDef[] = [
     ],
   },
   {
+    path: "/incontactapi/services/v30.0/agents/states",
+    name: "Agent States (Real-Time)",
+    description: "Real-time snapshot of all currently logged-in agents with their state, available flag, and the contact ID they are currently handling (if any).",
+    method: "GET",
+    category: "Real-Time",
+    params: [
+      { name: "agentStateId", label: "Agent State ID", type: "string", description: "Filter to a specific agent state" },
+      { name: "agentId", label: "Agent ID", type: "string", description: "Filter to a specific agent" },
+      { name: "teamId", label: "Team ID", type: "string", description: "Filter to a specific team" },
+      { name: "fields", label: "Fields", type: "string", placeholder: "agentId,agentStateName,contactId", description: "Comma-separated fields to return" },
+    ],
+  },
+  {
+    path: "/incontactapi/services/v30.0/skills/activity",
+    name: "Skills Activity (Real-Time)",
+    description: "Real-time activity by skill — calls in queue, agents available, longest queued, etc.",
+    method: "GET",
+    category: "Real-Time",
+    params: [
+      { name: "skillId", label: "Skill ID", type: "string", description: "Filter to a specific skill" },
+      { name: "mediaTypeId", label: "Media Type ID", type: "string", description: "Filter to a specific media type (e.g. 4=Phone)" },
+      { name: "fields", label: "Fields", type: "string", placeholder: "skillId,skillName,callsInQueue", description: "Comma-separated fields to return" },
+    ],
+  },
+  {
+    path: "/incontactapi/services/v30.0/teams/performance-summary",
+    name: "Teams Performance Summary (Real-Time)",
+    description: "Real-time performance summary for each team — agents logged in, on call, available, etc.",
+    method: "GET",
+    category: "Real-Time",
+    params: [
+      { name: "teamId", label: "Team ID", type: "string", description: "Filter to a specific team" },
+      { name: "fields", label: "Fields", type: "string", placeholder: "teamId,teamName,agentsLoggedIn", description: "Comma-separated fields to return" },
+    ],
+  },
+  {
     path: "/incontactapi/services/v30.0/skills/summary",
     name: "Skills Summary",
     description: "Get a summary of all configured skills including queue counts and service level data.",
