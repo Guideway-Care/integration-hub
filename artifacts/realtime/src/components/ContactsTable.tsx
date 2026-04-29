@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import { MessageSquare, Phone, Mail, FileText, Clock, Filter, X, ArrowDownLeft, ArrowUpRight } from "lucide-react";
 import {
   Select,
@@ -10,6 +12,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ChatTranscriptSheet } from "./ChatTranscriptSheet";
+import { ContactDetailsSheet } from "./ContactDetailsSheet";
 import { formatDistanceToNow } from "date-fns";
 
 interface ContactsTableProps {
@@ -76,15 +79,24 @@ function fmtTime(v?: string): string {
 export function ContactsTable({ contacts }: ContactsTableProps) {
   const [openContactId, setOpenContactId] = useState<string | null>(null);
   const [openLabel, setOpenLabel] = useState<string>("");
+  const [detailsContact, setDetailsContact] = useState<any | null>(null);
   const [typeFilter, setTypeFilter] = useState<string>(ALL);
   const [directionFilter, setDirectionFilter] = useState<string>(ALL);
   const [skillFilter, setSkillFilter] = useState<string>(ALL);
   const [agentFilter, setAgentFilter] = useState<string>(ALL);
+  const [activeOnly, setActiveOnly] = useState<boolean>(true);
 
   const validContacts = useMemo(
     () => contacts.filter((c) => c && typeof c === "object"),
     [contacts]
   );
+
+  function isReallyActive(c: any): boolean {
+    if (c?.isActive === false) return false;
+    const label = mediaLabel(c).toLowerCase();
+    if (label.includes("voice mail") || label.includes("voicemail")) return false;
+    return true;
+  }
 
   const typeOptions = useMemo(() => {
     const set = new Set<string>();
@@ -106,13 +118,14 @@ export function ContactsTable({ contacts }: ContactsTableProps) {
 
   const filtered = useMemo(() => {
     return validContacts.filter((c) => {
+      if (activeOnly && !isReallyActive(c)) return false;
       if (typeFilter !== ALL && mediaLabel(c) !== typeFilter) return false;
       if (directionFilter !== ALL && direction(c) !== directionFilter) return false;
       if (skillFilter !== ALL && skillLabel(c) !== skillFilter) return false;
       if (agentFilter !== ALL && agentLabel(c) !== agentFilter) return false;
       return true;
     });
-  }, [validContacts, typeFilter, directionFilter, skillFilter, agentFilter]);
+  }, [validContacts, activeOnly, typeFilter, directionFilter, skillFilter, agentFilter]);
 
   const anyFilterActive =
     typeFilter !== ALL ||
@@ -138,6 +151,16 @@ export function ContactsTable({ contacts }: ContactsTableProps) {
   return (
     <>
       <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-b border-border/50 bg-muted/30">
+        <div className="flex items-center gap-2 pr-2 mr-1 border-r border-border/50">
+          <Switch
+            id="active-only"
+            checked={activeOnly}
+            onCheckedChange={setActiveOnly}
+          />
+          <Label htmlFor="active-only" className="text-xs cursor-pointer select-none">
+            Active only
+          </Label>
+        </div>
         <Filter className="w-4 h-4 text-muted-foreground" />
         <FilterSelect
           label="Type"
@@ -232,7 +255,8 @@ export function ContactsTable({ contacts }: ContactsTableProps) {
               return (
                 <tr
                   key={contactId || i}
-                  className="hover:bg-muted/40 transition-colors"
+                  className="hover:bg-muted/40 transition-colors cursor-pointer"
+                  onClick={() => setDetailsContact(c)}
                 >
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
@@ -253,7 +277,7 @@ export function ContactsTable({ contacts }: ContactsTableProps) {
                       <span className="text-xs">{fmtTime(started)}</span>
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                     {isChat && contactId ? (
                       <Button
                         variant="outline"
@@ -267,9 +291,14 @@ export function ContactsTable({ contacts }: ContactsTableProps) {
                         View transcript
                       </Button>
                     ) : (
-                      <Badge variant="secondary" className="text-[10px] font-normal">
-                        {isChat ? "no id" : "n/a"}
-                      </Badge>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={() => setDetailsContact(c)}
+                      >
+                        Details
+                      </Button>
                     )}
                   </td>
                 </tr>
@@ -288,6 +317,14 @@ export function ContactsTable({ contacts }: ContactsTableProps) {
             setOpenContactId(null);
             setOpenLabel("");
           }
+        }}
+      />
+
+      <ContactDetailsSheet
+        contact={detailsContact}
+        open={!!detailsContact}
+        onOpenChange={(o) => {
+          if (!o) setDetailsContact(null);
         }}
       />
     </>
