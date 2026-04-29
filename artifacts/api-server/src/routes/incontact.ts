@@ -319,7 +319,13 @@ router.post("/incontact/fetch", async (req, res) => {
     });
   } catch (err: any) {
     console.error("[incontact/fetch]", err.message);
-    res.status(500).json({ error: "Failed to fetch from InContact API" });
+    const msg = err?.message || "Failed to fetch from InContact API";
+    const isAuth = /UNAUTHENTICATED|invalid authentication|invalid_grant|access[_ ]denied/i.test(msg);
+    res.status(500).json({
+      error: isAuth
+        ? `GCP credential rejected: ${msg}`
+        : `Failed to fetch from InContact API: ${msg}`,
+    });
   }
 });
 
