@@ -41,3 +41,13 @@ export async function fetchNiceData<T = any>(endpointPath: string): Promise<Nice
 
   return payload;
 }
+
+export function extractArray(data: unknown): any[] {
+  if (Array.isArray(data)) return data;
+  if (data && typeof data === "object") {
+    for (const value of Object.values(data as Record<string, unknown>)) {
+      if (Array.isArray(value)) return value;
+    }
+  }
+  return [];
+}

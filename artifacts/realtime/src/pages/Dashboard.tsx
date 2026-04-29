@@ -1,10 +1,11 @@
-import { useAllNiceData, useNiceQuery } from "@/hooks/use-nice-data";
+import { useAllNiceData } from "@/hooks/use-nice-data";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AlertCircle, RefreshCw } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { format } from "date-fns";
 import { AnimatedValue } from "@/components/AnimatedValue";
 import { Skeleton } from "@/components/ui/skeleton";
+import { extractArray } from "@/lib/api";
 
 export default function Dashboard() {
   const { agents, skills, teams, contacts } = useAllNiceData();
@@ -12,13 +13,16 @@ export default function Dashboard() {
   const isError = agents.isError || skills.isError || teams.isError || contacts.isError;
   const isFetching = agents.isFetching || skills.isFetching || teams.isFetching || contacts.isFetching;
 
-  // Safely extract counts
-  const agentsList = Array.isArray(agents.data?.data) ? agents.data.data : [];
+  const agentsList = extractArray(agents.data?.data);
   const onlineAgents = agentsList.filter(a => a.agentStateName !== "Logged Out").length;
   const workingAgents = agentsList.filter(a => a.agentStateName === "Working").length;
-  
-  const contactsList = Array.isArray(contacts.data?.data) ? contacts.data.data : [];
+
+  const contactsList = extractArray(contacts.data?.data);
   const activeContacts = contactsList.length;
+
+  const skillsList = extractArray(skills.data?.data);
+  const teamsList = extractArray(teams.data?.data);
+  void teamsList;
 
   return (
     <div className="space-y-6">
@@ -65,7 +69,7 @@ export default function Dashboard() {
         />
         <KpiCard 
           title="Skills Active" 
-          value={skills.isLoading ? null : (Array.isArray(skills.data?.data) ? skills.data.data.length : 0)} 
+          value={skills.isLoading ? null : skillsList.length} 
           trend="Configured queues"
         />
       </div>
@@ -90,7 +94,11 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent className="pt-4 p-0">
             <div className="bg-muted p-4 rounded-md overflow-auto text-xs font-mono text-foreground h-64">
-              {agents.data ? JSON.stringify(agents.data.data.slice(0, 3), null, 2) : "Waiting for telemetry..."}
+              {agentsList.length > 0
+                ? JSON.stringify(agentsList.slice(0, 3), null, 2)
+                : agents.data
+                  ? JSON.stringify(agents.data.data, null, 2).slice(0, 1500)
+                  : "Waiting for telemetry..."}
             </div>
           </CardContent>
         </Card>

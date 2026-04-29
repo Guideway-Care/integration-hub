@@ -1,4 +1,5 @@
 import { useNiceQuery } from "@/hooks/use-nice-data";
+import { extractArray } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AlertCircle, Search, RefreshCw } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -11,7 +12,7 @@ export default function Agents() {
   const { data: response, isLoading, isError, error, isFetching } = useNiceQuery("agents");
   const [search, setSearch] = useState("");
 
-  const agents = Array.isArray(response?.data) ? response.data : [];
+  const agents = extractArray(response?.data);
   
   const filteredAgents = agents.filter(a => {
     if (!search) return true;
