@@ -14,8 +14,13 @@ export default function Dashboard() {
   const isFetching = agents.isFetching || skills.isFetching || teams.isFetching || contacts.isFetching;
 
   const agentsList = extractArray(agents.data?.data);
-  const onlineAgents = agentsList.filter(a => a.agentStateName !== "Logged Out").length;
-  const workingAgents = agentsList.filter(a => a.agentStateName === "Working").length;
+  const onlineAgents = agentsList.filter(
+    (a) => a?.agentStateName && a.agentStateName !== "LoggedOut" && a.agentStateName !== "Logged Out"
+  ).length;
+  const WORKING_STATES = new Set(["InboundContact", "OutboundContact", "Working"]);
+  const workingAgents = agentsList.filter(
+    (a) => a?.agentStateName && WORKING_STATES.has(a.agentStateName)
+  ).length;
 
   const contactsList = extractArray(contacts.data?.data);
   const activeContacts = contactsList.length;
@@ -74,35 +79,18 @@ export default function Dashboard() {
         />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card className="bg-card">
-          <CardHeader className="pb-2 border-b border-border/50">
-            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Agent States Distribution</CardTitle>
-          </CardHeader>
-          <CardContent className="pt-4">
-            {agents.isLoading ? (
-              <div className="space-y-2"><Skeleton className="h-8 w-full" /><Skeleton className="h-8 w-full" /></div>
-            ) : (
-              <AgentStatesChart agents={agentsList} />
-            )}
-          </CardContent>
-        </Card>
-
-        <Card className="bg-card">
-          <CardHeader className="pb-2 border-b border-border/50">
-            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Raw Telemetry Snippet</CardTitle>
-          </CardHeader>
-          <CardContent className="pt-4 p-0">
-            <div className="bg-muted p-4 rounded-md overflow-auto text-xs font-mono text-foreground h-64">
-              {agentsList.length > 0
-                ? JSON.stringify(agentsList.slice(0, 3), null, 2)
-                : agents.data
-                  ? JSON.stringify(agents.data.data, null, 2).slice(0, 1500)
-                  : "Waiting for telemetry..."}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      <Card className="bg-card">
+        <CardHeader className="pb-2 border-b border-border/50">
+          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Agent States Distribution</CardTitle>
+        </CardHeader>
+        <CardContent className="pt-4">
+          {agents.isLoading ? (
+            <div className="space-y-2"><Skeleton className="h-8 w-full" /><Skeleton className="h-8 w-full" /></div>
+          ) : (
+            <AgentStatesChart agents={agentsList} />
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
