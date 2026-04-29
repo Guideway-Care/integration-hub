@@ -17,10 +17,10 @@ export function Layout({ children }: { children: ReactNode }) {
 
   const navItems = [
     { href: "/", label: "Overview", icon: Activity },
+    { href: "/contacts", label: "Contacts", icon: Phone },
     { href: "/agents", label: "Agents", icon: Users },
     { href: "/skills", label: "Skills", icon: Layers },
     { href: "/teams", label: "Teams", icon: Network },
-    { href: "/contacts", label: "Contacts", icon: Phone },
     { href: "/settings", label: "Settings", icon: Settings },
   ];
 

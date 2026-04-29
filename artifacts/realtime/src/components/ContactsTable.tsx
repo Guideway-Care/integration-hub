@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { MessageSquare, Phone, Mail, FileText, Clock, Filter, X, ArrowDownLeft, ArrowUpRight } from "lucide-react";
+import { MessageSquare, Phone, Mail, FileText, Clock, Filter, X, ArrowDownLeft, ArrowUpRight, ArrowUp, ArrowDown, ChevronsUpDown } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -50,6 +50,58 @@ function agentLabel(c: any): string {
   if (c?.firstName && c?.lastName) return `${c.firstName} ${c.lastName}`;
   if (c?.agentId) return String(c.agentId);
   return "—";
+}
+
+type SortKey =
+  | "type"
+  | "direction"
+  | "contactId"
+  | "from"
+  | "skill"
+  | "agent"
+  | "state"
+  | "started";
+
+type SortDir = "asc" | "desc";
+
+function fromLabel(c: any): string {
+  return String(c?.fromAddress || c?.FromAddress || c?.ani || c?.ANI || "");
+}
+
+function stateLabel(c: any): string {
+  return String(c?.stateName || c?.contactStateCategory || "");
+}
+
+function startedTs(c: any): number {
+  const v = pickStarted(c);
+  if (!v) return 0;
+  const t = new Date(v).getTime();
+  return isFinite(t) ? t : 0;
+}
+
+function sortValue(c: any, key: SortKey): string | number {
+  switch (key) {
+    case "type": return mediaLabel(c).toLowerCase();
+    case "direction": return direction(c);
+    case "contactId": return Number(c?.contactId ?? c?.ContactId ?? 0) || 0;
+    case "from": return fromLabel(c).toLowerCase();
+    case "skill": return skillLabel(c).toLowerCase();
+    case "agent": return agentLabel(c).toLowerCase();
+    case "state": return stateLabel(c).toLowerCase();
+    case "started": return startedTs(c);
+  }
+}
+
+function compareSort(a: any, b: any, key: SortKey, dir: SortDir): number {
+  const av = sortValue(a, key);
+  const bv = sortValue(b, key);
+  let cmp = 0;
+  if (typeof av === "number" && typeof bv === "number") {
+    cmp = av - bv;
+  } else {
+    cmp = String(av).localeCompare(String(bv));
+  }
+  return dir === "asc" ? cmp : -cmp;
 }
 
 type Direction = "Inbound" | "Outbound" | "Unknown";
@@ -109,6 +161,17 @@ export function ContactsTable({ contacts }: ContactsTableProps) {
   const [skillFilter, setSkillFilter] = useState<string>(ALL);
   const [agentFilter, setAgentFilter] = useState<string>(ALL);
   const [activeOnly, setActiveOnly] = useState<boolean>(true);
+  const [sortKey, setSortKey] = useState<SortKey>("started");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
+
+  function toggleSort(key: SortKey) {
+    if (key === sortKey) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+  }
 
   const validContacts = useMemo(
     () => contacts.filter((c) => c && typeof c === "object"),
@@ -145,7 +208,7 @@ export function ContactsTable({ contacts }: ContactsTableProps) {
   }, [validContacts]);
 
   const filtered = useMemo(() => {
-    return validContacts.filter((c) => {
+    const out = validContacts.filter((c) => {
       if (activeOnly && !isReallyActive(c)) return false;
       if (typeFilter !== ALL && mediaLabel(c) !== typeFilter) return false;
       if (directionFilter !== ALL && direction(c) !== directionFilter) return false;
@@ -153,7 +216,8 @@ export function ContactsTable({ contacts }: ContactsTableProps) {
       if (agentFilter !== ALL && agentLabel(c) !== agentFilter) return false;
       return true;
     });
-  }, [validContacts, activeOnly, typeFilter, directionFilter, skillFilter, agentFilter]);
+    return [...out].sort((a, b) => compareSort(a, b, sortKey, sortDir));
+  }, [validContacts, activeOnly, typeFilter, directionFilter, skillFilter, agentFilter, sortKey, sortDir]);
 
   const anyFilterActive =
     typeFilter !== ALL ||
@@ -237,14 +301,14 @@ export function ContactsTable({ contacts }: ContactsTableProps) {
         <table className="w-full text-sm text-left">
           <thead className="text-xs text-muted-foreground uppercase bg-muted border-b border-border/50">
             <tr>
-              <th className="px-4 py-3 font-medium">Type</th>
-              <th className="px-4 py-3 font-medium">Direction</th>
-              <th className="px-4 py-3 font-medium">Contact ID</th>
-              <th className="px-4 py-3 font-medium">From</th>
-              <th className="px-4 py-3 font-medium">Skill</th>
-              <th className="px-4 py-3 font-medium">Agent</th>
-              <th className="px-4 py-3 font-medium">State</th>
-              <th className="px-4 py-3 font-medium">Started</th>
+              <SortHeader label="Type" sortKey="type" current={sortKey} dir={sortDir} onClick={toggleSort} />
+              <SortHeader label="Direction" sortKey="direction" current={sortKey} dir={sortDir} onClick={toggleSort} />
+              <SortHeader label="Contact ID" sortKey="contactId" current={sortKey} dir={sortDir} onClick={toggleSort} />
+              <SortHeader label="From" sortKey="from" current={sortKey} dir={sortDir} onClick={toggleSort} />
+              <SortHeader label="Skill" sortKey="skill" current={sortKey} dir={sortDir} onClick={toggleSort} />
+              <SortHeader label="Agent" sortKey="agent" current={sortKey} dir={sortDir} onClick={toggleSort} />
+              <SortHeader label="State" sortKey="state" current={sortKey} dir={sortDir} onClick={toggleSort} />
+              <SortHeader label="Started" sortKey="started" current={sortKey} dir={sortDir} onClick={toggleSort} />
               <th className="px-4 py-3 font-medium text-right">Actions</th>
             </tr>
           </thead>
@@ -364,6 +428,32 @@ interface FilterSelectProps {
   value: string;
   onChange: (v: string) => void;
   options: string[];
+}
+
+interface SortHeaderProps {
+  label: string;
+  sortKey: SortKey;
+  current: SortKey;
+  dir: SortDir;
+  onClick: (k: SortKey) => void;
+}
+
+function SortHeader({ label, sortKey, current, dir, onClick }: SortHeaderProps) {
+  const isActive = current === sortKey;
+  const Icon = isActive ? (dir === "asc" ? ArrowUp : ArrowDown) : ChevronsUpDown;
+  return (
+    <th
+      className="px-4 py-3 font-medium cursor-pointer select-none hover:text-foreground transition-colors"
+      onClick={() => onClick(sortKey)}
+    >
+      <div className="flex items-center gap-1">
+        {label}
+        <Icon
+          className={`w-3 h-3 ${isActive ? "text-foreground" : "text-muted-foreground/40"}`}
+        />
+      </div>
+    </th>
+  );
 }
 
 function StateBadge({ contact }: { contact: any }) {
