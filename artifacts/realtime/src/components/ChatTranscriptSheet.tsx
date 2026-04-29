@@ -40,7 +40,7 @@ async function fetchChatTranscript(contactId: string) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       endpoint: "/incontactapi/services/v30.0/contacts/chats/{contactId}",
-      params: { contactId },
+      params: { contactId, timeout: "0" },
     }),
   });
 
