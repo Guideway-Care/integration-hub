@@ -146,6 +146,16 @@ const ENDPOINT_DEFS: EndpointDef[] = [
     ],
   },
   {
+    path: "/incontactapi/services/v30.0/teams",
+    name: "Teams",
+    description: "List all teams configured in the NICE CXone system.",
+    method: "GET",
+    category: "Workforce",
+    params: [
+      { name: "fields", label: "Fields", type: "string", placeholder: "teamId,teamName", description: "Comma-separated list of fields to return" },
+    ],
+  },
+  {
     path: "/incontactapi/services/v30.0/teams/performance-summary",
     name: "Teams Performance Summary (Real-Time)",
     description: "Real-time performance summary for each team — agents logged in, on call, available, etc.",
