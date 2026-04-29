@@ -106,8 +106,12 @@ export function ContactDetailsSheet({ contact, open, onOpenChange }: ContactDeta
   const contactId = String(contact.contactId ?? contact.ContactId ?? "");
   const isOutbound = contact.isOutbound === true;
   const isInbound = contact.isOutbound === false;
-  const masterId = String(contact.masterId ?? contact.MasterId ?? "");
+  const masterId = String(
+    contact.masterContactId ?? contact.MasterContactId ?? contact.masterId ?? contact.MasterId ?? ""
+  );
   const startDate =
+    contact.contactStartDate ||
+    contact.ContactStartDate ||
     contact.startDate ||
     contact.StartDate ||
     contact.contactStart ||
@@ -115,9 +119,11 @@ export function ContactDetailsSheet({ contact, open, onOpenChange }: ContactDeta
     contact.stateStartDate ||
     contact.lastUpdateTime ||
     contact.LastUpdateTime;
+  const agentStart = contact.agentStartDate || contact.AgentStartDate;
   const handleStart =
     contact.contactStartHandleTime || contact.startHandleTime;
   const acwStart = contact.acwStartDate;
+  const lastUpdate = contact.lastUpdateTime || contact.LastUpdateTime;
 
   const agentName =
     contact.agentName ||
@@ -132,15 +138,19 @@ export function ContactDetailsSheet({ contact, open, onOpenChange }: ContactDeta
   const skillId = contact.skillId ?? contact.SkillId;
   const campaignName = contact.campaignName ?? contact.CampaignName;
   const campaignId = contact.campaignId ?? contact.CampaignId;
-  const pointOfContact = contact.pointOfContact ?? contact.PointOfContact;
+  const pointOfContact =
+    contact.pointOfContactName ?? contact.PointOfContactName ?? contact.pointOfContact ?? contact.PointOfContact;
   const dispositionId = contact.dispositionId ?? contact.DispositionId;
+
+  const stateName = contact.stateName ?? contact.StateName;
+  const stateCategory = contact.contactStateCategory ?? contact.ContactStateCategory;
 
   const fromAddr = contact.fromAddress || contact.FromAddress || contact.ani || contact.ANI;
   const toAddr = contact.toAddress || contact.ToAddress || contact.dnis || contact.DNIS;
 
   const isActive = contact.isActive !== false;
   const isACW = contact.isACW === true;
-  const isHold = contact.isHold === true || contact.isOnHold === true;
+  const isHold = contact.isHold === true || contact.isOnHold === true || (contact.holdCount ?? 0) > 0;
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -165,6 +175,16 @@ export function ContactDetailsSheet({ contact, open, onOpenChange }: ContactDeta
           </SheetDescription>
 
           <div className="flex flex-wrap gap-1.5 pt-2">
+            {stateName && (
+              <Badge variant="outline" className="text-[10px] gap-1 bg-blue-500/10 text-blue-700 border-blue-500/30">
+                <CircleDot className="w-3 h-3" /> {String(stateName)}
+              </Badge>
+            )}
+            {stateCategory && (
+              <Badge variant="outline" className="text-[10px] gap-1 bg-muted text-muted-foreground">
+                {String(stateCategory)}
+              </Badge>
+            )}
             {isActive ? (
               <Badge variant="outline" className="text-[10px] gap-1 bg-emerald-500/10 text-emerald-700 border-emerald-500/30">
                 <CircleCheck className="w-3 h-3" /> Active
@@ -217,6 +237,17 @@ export function ContactDetailsSheet({ contact, open, onOpenChange }: ContactDeta
                 }
               />
               <Row label="Duration" value={fmtDuration(startDate)} />
+              {agentStart && (
+                <Row
+                  label="Agent picked up"
+                  value={
+                    <div>
+                      <div>{fmtAbs(agentStart)}</div>
+                      <div className="text-xs text-muted-foreground">{fmtRel(agentStart)}</div>
+                    </div>
+                  }
+                />
+              )}
               {handleStart && (
                 <Row
                   label="Handled at"
@@ -224,6 +255,17 @@ export function ContactDetailsSheet({ contact, open, onOpenChange }: ContactDeta
                     <div>
                       <div>{fmtAbs(handleStart)}</div>
                       <div className="text-xs text-muted-foreground">{fmtRel(handleStart)}</div>
+                    </div>
+                  }
+                />
+              )}
+              {lastUpdate && (
+                <Row
+                  label="Last update"
+                  value={
+                    <div>
+                      <div>{fmtAbs(lastUpdate)}</div>
+                      <div className="text-xs text-muted-foreground">{fmtRel(lastUpdate)}</div>
                     </div>
                   }
                 />

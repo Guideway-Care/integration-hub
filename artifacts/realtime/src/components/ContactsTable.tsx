@@ -68,15 +68,18 @@ function direction(c: any): Direction {
 const ALL = "__all__";
 
 const STARTED_FIELDS = [
+  "contactStartDate",
+  "ContactStartDate",
   "startDate",
   "StartDate",
   "contactStart",
   "contactStartTime",
   "contactStartHandleTime",
   "startHandleTime",
+  "agentStartDate",
+  "stateStartDate",
   "lastUpdateTime",
   "LastUpdateTime",
-  "stateStartDate",
   "acwStartDate",
 ] as const;
 
@@ -114,6 +117,10 @@ export function ContactsTable({ contacts }: ContactsTableProps) {
 
   function isReallyActive(c: any): boolean {
     if (c?.isActive === false) return false;
+    const cat = String(c?.contactStateCategory || "").toLowerCase();
+    if (cat === "post agent" || cat === "terminated" || cat === "finished") return false;
+    const state = String(c?.stateName || "").toLowerCase();
+    if (state === "transfer" || state === "disconnected" || state === "terminated") return false;
     const label = mediaLabel(c).toLowerCase();
     if (label.includes("voice mail") || label.includes("voicemail")) return false;
     return true;
@@ -236,6 +243,7 @@ export function ContactsTable({ contacts }: ContactsTableProps) {
               <th className="px-4 py-3 font-medium">From</th>
               <th className="px-4 py-3 font-medium">Skill</th>
               <th className="px-4 py-3 font-medium">Agent</th>
+              <th className="px-4 py-3 font-medium">State</th>
               <th className="px-4 py-3 font-medium">Started</th>
               <th className="px-4 py-3 font-medium text-right">Actions</th>
             </tr>
@@ -243,7 +251,7 @@ export function ContactsTable({ contacts }: ContactsTableProps) {
           <tbody className="divide-y divide-border/30">
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-4 py-8 text-center text-sm text-muted-foreground">
+                <td colSpan={9} className="px-4 py-8 text-center text-sm text-muted-foreground">
                   No contacts match the current filters.
                 </td>
               </tr>
@@ -288,6 +296,9 @@ export function ContactsTable({ contacts }: ContactsTableProps) {
                   <td className="px-4 py-3 text-muted-foreground">{String(from)}</td>
                   <td className="px-4 py-3 text-muted-foreground">{String(skill)}</td>
                   <td className="px-4 py-3 text-muted-foreground">{String(agent)}</td>
+                  <td className="px-4 py-3">
+                    <StateBadge contact={c} />
+                  </td>
                   <td className="px-4 py-3 text-muted-foreground">
                     <div className="flex items-center gap-1.5">
                       <Clock className="w-3 h-3" />
@@ -353,6 +364,33 @@ interface FilterSelectProps {
   value: string;
   onChange: (v: string) => void;
   options: string[];
+}
+
+function StateBadge({ contact }: { contact: any }) {
+  const state = String(contact?.stateName || "").trim();
+  const cat = String(contact?.contactStateCategory || "").trim();
+  const display = state || cat || "—";
+  if (!state && !cat) {
+    return <span className="text-xs text-muted-foreground">—</span>;
+  }
+  const lc = (state || cat).toLowerCase();
+  let cls = "bg-muted text-muted-foreground";
+  if (lc.includes("active") || lc.includes("connected") || lc.includes("talking")) {
+    cls = "bg-emerald-500/15 text-emerald-700 border-emerald-500/30";
+  } else if (lc.includes("hold")) {
+    cls = "bg-orange-500/15 text-orange-700 border-orange-500/30";
+  } else if (lc.includes("transfer") || lc.includes("post agent")) {
+    cls = "bg-amber-500/15 text-amber-700 border-amber-500/30";
+  } else if (lc.includes("pre agent") || lc.includes("queue") || lc.includes("ringing")) {
+    cls = "bg-blue-500/15 text-blue-700 border-blue-500/30";
+  } else if (lc.includes("acw") || lc.includes("wrap")) {
+    cls = "bg-purple-500/15 text-purple-700 border-purple-500/30";
+  }
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium border ${cls}`}>
+      {display}
+    </span>
+  );
 }
 
 function DirectionBadge({ value }: { value: Direction }) {
