@@ -1,7 +1,7 @@
 export const NICE_ENDPOINTS = {
   agents: "/incontactapi/services/v30.0/agents/states",
   skills: "/incontactapi/services/v30.0/skills/activity",
-  teams: "/incontactapi/services/v30.0/teams/performance-summary",
+  teams: "/incontactapi/services/v30.0/teams",
   contacts: "/incontactapi/services/v30.0/contacts/active",
 } as const;
 
