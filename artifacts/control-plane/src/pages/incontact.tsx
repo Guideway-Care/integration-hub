@@ -1198,7 +1198,7 @@ export default function InContactPage() {
           <PipelineStep
             number={3}
             title="Queue Recordings"
-            description="Find United Regional Health calls with 'Reached Patient' disposition missing from call_recordings and write to call_list.txt"
+            description="Find United Regional Health and Dignity calls with 'Reached Patient' disposition missing from call_recordings and write to call_list.txt"
             status={runLoaderMutation.isPending ? "running" : runLoaderMutation.isSuccess ? "success" : runLoaderMutation.isError ? "error" : "idle"}
             onRun={() => runLoaderMutation.mutate()}
             isRunning={runLoaderMutation.isPending}
