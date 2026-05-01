@@ -867,7 +867,8 @@ router.post("/bq/queue-recordings", async (_req, res) => {
           OR (c.campaign_name = 'Dignity'                 AND c.primary_disposition_name LIKE 'Reached Patient%')
         )
         AND r.acd_contact_id IS NULL
-      ORDER BY c.contact_start_date DESC
+        AND DATE(c.contact_start_date) >= '2026-01-15'
+      ORDER BY c.contact_start_date ASC
     `;
 
     console.log("[queue-recordings] Running query to find missing recordings...");
