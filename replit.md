@@ -112,7 +112,7 @@ React + Vite frontend dashboard. "API Controller Hub" branding throughout.
 
 - **Layout**: Sidebar navigation with 10 sections
 - **Pages**:
-  - Dashboard — Homepage with summary metrics cards, extraction pipeline stats, InContact staging health, recent runs (skeleton loading)
+  - Dashboard — Homepage with summary metric cards, daily-job + staging-queue stats, **Contacts daily-volume calendar** + **Agents daily-activity calendar** (both reuse `contact-calendar.tsx`, deep-link to Monitor tab), recent runs (skeleton loading)
   - Source Systems — CRUD cards for API source systems (toast notifications on create/update/delete)
   - Endpoints — Table with method badges, pagination/incremental config
   - Runs — Table with status badges, cancel/replay actions (toast notifications, skeleton loading, error state)
@@ -122,7 +122,7 @@ React + Vite frontend dashboard. "API Controller Hub" branding throughout.
   - InContact — Unified pipeline page with tabs: Pipeline (4-step flow: Retrieve → Transform → Queue → Download, with Run Now buttons, date filters, monthly calendar grid with DOW averages), Staging Queue (queue management + job triggers), Recordings (call recordings table), Contacts Daily (scheduled-job summary, daily filter rules CRUD, ad-hoc recording pull form), API Explorer (raw API testing)
   - Audit Log — Filterable audit trail of all platform changes with pagination (skeleton loading)
   - Scripts — Copiable BigQuery SQL setup scripts
-- **Shared components**: `table-skeleton.tsx` (TableSkeleton, CardSkeleton, MetricsSkeleton)
+- **Shared components**: `table-skeleton.tsx` (TableSkeleton, CardSkeleton, MetricsSkeleton); `contact-calendar.tsx` (monthly heatmap with DOW averages — used by Dashboard for Contacts/Agents daily views and by InContact → Monitor)
 - **Toast system**: shadcn/ui toast with `useToast` hook, Toaster mounted in App.tsx
 - **API Client**: `src/lib/api.ts` — fetch wrapper proxied to API server via Vite
 - Vite proxy: `/api` → `http://0.0.0.0:8080`

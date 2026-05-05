@@ -11,8 +11,11 @@ import {
   ArrowRight,
   RefreshCw,
   TrendingUp,
+  CalendarDays,
+  Users,
 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ContactCalendar, type DailyCount } from "@/components/contact-calendar";
 
 interface DashboardData {
   sourceSystems: { total: number; active: number };
@@ -91,6 +94,18 @@ export default function DashboardPage() {
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["dashboard-summary"],
     queryFn: () => api.get<DashboardData>("/dashboard/summary"),
+  });
+
+  const { data: contactDaily, isLoading: contactDailyLoading } = useQuery({
+    queryKey: ["dashboard-contact-daily"],
+    queryFn: () => api.get<{ data: DailyCount[] }>("/monitor/contact-daily-counts?startDate=2026-01-01"),
+    retry: false,
+  });
+
+  const { data: agentDaily, isLoading: agentDailyLoading } = useQuery({
+    queryKey: ["dashboard-agent-daily"],
+    queryFn: () => api.get<{ data: DailyCount[] }>("/monitor/agent-daily-counts?startDate=2026-01-01"),
+    retry: false,
   });
 
   if (isLoading) {
@@ -260,6 +275,46 @@ export default function DashboardPage() {
           <div className="mt-2 text-[10px] text-muted-foreground text-right">
             {d.incontact.staging.total.toLocaleString()} total queued
           </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 mb-6">
+        <div className="border border-border rounded-lg p-4 bg-card">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold flex items-center gap-2">
+              <CalendarDays className="w-4 h-4 text-blue-500" />
+              Contacts — Daily Volume
+            </h3>
+            <Link href="/incontact?tab=monitor">
+              <span className="text-xs text-primary hover:underline cursor-pointer">Open Monitor</span>
+            </Link>
+          </div>
+          {contactDailyLoading ? (
+            <Skeleton className="h-48 w-full" />
+          ) : (contactDaily?.data?.length ?? 0) > 0 ? (
+            <ContactCalendar rows={contactDaily!.data} monthsPerPage={2} />
+          ) : (
+            <div className="text-center py-8 text-sm text-muted-foreground">No contact data available.</div>
+          )}
+        </div>
+
+        <div className="border border-border rounded-lg p-4 bg-card">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold flex items-center gap-2">
+              <Users className="w-4 h-4 text-green-500" />
+              Agents — Daily Activity
+            </h3>
+            <Link href="/incontact?tab=monitor">
+              <span className="text-xs text-primary hover:underline cursor-pointer">Open Monitor</span>
+            </Link>
+          </div>
+          {agentDailyLoading ? (
+            <Skeleton className="h-48 w-full" />
+          ) : (agentDaily?.data?.length ?? 0) > 0 ? (
+            <ContactCalendar rows={agentDaily!.data} monthsPerPage={2} />
+          ) : (
+            <div className="text-center py-8 text-sm text-muted-foreground">No agent activity data available. Run the agents extraction and transform first.</div>
+          )}
         </div>
       </div>
 
