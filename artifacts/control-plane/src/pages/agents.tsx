@@ -108,7 +108,7 @@ function PipelineStep({
   runLabel,
   children,
 }: {
-  number: number;
+  number: number | null;
   title: string;
   description: string;
   status: "idle" | "running" | "success" | "error";
@@ -127,9 +127,11 @@ function PipelineStep({
   return (
     <div className="border border-border rounded-lg bg-card overflow-hidden">
       <div className="flex items-center gap-3 px-4 py-3 border-b border-border bg-muted/30">
-        <div className="w-7 h-7 rounded-full bg-primary/10 text-primary flex items-center justify-center text-sm font-bold">
-          {number}
-        </div>
+        {number !== null && (
+          <div className="w-7 h-7 rounded-full bg-primary/10 text-primary flex items-center justify-center text-sm font-bold">
+            {number}
+          </div>
+        )}
         <div className="flex-1 min-w-0">
           <h3 className="text-sm font-semibold">{title}</h3>
           <p className="text-xs text-muted-foreground">{description}</p>
@@ -238,6 +240,45 @@ export default function AgentsPage() {
     },
   });
 
+  const { data: transformStatus } = useQuery({
+    queryKey: ["agents-transform-job-status"],
+    queryFn: () => api.get<{ status: "idle" | "running" | "completed" | "failed"; step: string; startedAt?: string; completedAt?: string; durationFormatted?: string; rowsProcessed?: string | null; error?: string }>("/bq/transform-agents-job-status"),
+    refetchInterval: (q) => (q.state.data?.status === "running" ? 3000 : 30000),
+  });
+
+  const transformMutation = useMutation({
+    mutationFn: () => api.post<any>("/bq/transform-agents", {}),
+    onSuccess: () => {
+      toast({ title: "Transform started", description: "Parsing raw payload → incontact.agent_activity" });
+      queryClient.invalidateQueries({ queryKey: ["agents-transform-job-status"] });
+    },
+    onError: (err) => {
+      toast({ title: "Transform failed to start", description: (err as Error).message, variant: "destructive" });
+    },
+  });
+
+  const { data: dailyJobStatus } = useQuery({
+    queryKey: ["agents-daily-job-status"],
+    queryFn: () => api.get<{ data: { status: "idle" | "running" | "completed" | "failed"; phase: "extract" | "transform" | "done" | ""; date?: string; startedAt?: string; completedAt?: string; durationMs?: number; error?: string; trigger?: "manual" | "scheduled" }; yesterdayChicago: string }>("/incontact/agents-daily-job/status"),
+    refetchInterval: (q) => (q.state.data?.data?.status === "running" ? 3000 : 30000),
+  });
+
+  const dailyJobMutation = useMutation({
+    mutationFn: () => api.post<{ message: string; date: string }>("/incontact/agents-daily-job", {}),
+    onSuccess: (res) => {
+      toast({ title: "Daily job started", description: `Extract + Transform for ${res.date}` });
+      queryClient.invalidateQueries({ queryKey: ["agents-daily-job-status"] });
+      queryClient.invalidateQueries({ queryKey: ["agents-last-run"] });
+      queryClient.invalidateQueries({ queryKey: ["agents-transform-job-status"] });
+    },
+    onError: (err) => {
+      toast({ title: "Failed to start daily job", description: (err as Error).message, variant: "destructive" });
+    },
+  });
+
+  const isTransformActive = transformStatus?.status === "running";
+  const isDailyJobActive = dailyJobStatus?.data?.status === "running";
+
   const previewMutation = useMutation({
     mutationFn: () => {
       const startDate = `${dateRange.startDate}T00:00:00Z`;
@@ -345,8 +386,23 @@ export default function AgentsPage() {
         </div>
         <div className="flex items-center gap-2">
           <button
+            onClick={() => dailyJobMutation.mutate()}
+            disabled={dailyJobMutation.isPending || isDailyJobActive}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-primary text-primary-foreground rounded-md text-xs font-medium hover:opacity-90 disabled:opacity-50"
+            title="Runs Extract + Transform end-to-end for yesterday (Chicago)"
+          >
+            {dailyJobMutation.isPending || isDailyJobActive ? (
+              <Loader2 className="w-3 h-3 animate-spin" />
+            ) : (
+              <Play className="w-3 h-3" />
+            )}
+            Run Full Daily Job
+          </button>
+          <button
             onClick={() => {
               queryClient.invalidateQueries({ queryKey: ["agents-last-run"] });
+              queryClient.invalidateQueries({ queryKey: ["agents-transform-job-status"] });
+              queryClient.invalidateQueries({ queryKey: ["agents-daily-job-status"] });
             }}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-border rounded-md text-xs hover:bg-muted"
           >
@@ -354,6 +410,26 @@ export default function AgentsPage() {
           </button>
         </div>
       </div>
+
+      {dailyJobStatus?.data && dailyJobStatus.data.status !== "idle" && (
+        <div className={`mb-4 p-3 rounded-md border text-xs ${
+          dailyJobStatus.data.status === "running" ? "bg-blue-50 border-blue-200 text-blue-800" :
+          dailyJobStatus.data.status === "completed" ? "bg-green-50 border-green-200 text-green-800" :
+          "bg-red-50 border-red-200 text-red-800"
+        }`}>
+          <div className="flex items-center justify-between">
+            <span className="font-medium">
+              Daily Job ({dailyJobStatus.data.trigger || "manual"}) — {dailyJobStatus.data.status.toUpperCase()}
+              {dailyJobStatus.data.phase && dailyJobStatus.data.status === "running" && ` · phase: ${dailyJobStatus.data.phase}`}
+            </span>
+            <span className="text-[10px] opacity-75">
+              {dailyJobStatus.data.date && `for ${dailyJobStatus.data.date}`}
+              {dailyJobStatus.data.completedAt && ` · finished ${new Date(dailyJobStatus.data.completedAt).toLocaleString()}`}
+            </span>
+          </div>
+          {dailyJobStatus.data.error && <div className="mt-1">Error: {dailyJobStatus.data.error}</div>}
+        </div>
+      )}
 
       <div className="border-b border-border mb-6">
         <div className="flex gap-0">
@@ -484,8 +560,53 @@ export default function AgentsPage() {
 
           <PipelineStep
             number={2}
-            title="Preview Results"
-            description="Load agent performance data from the API for review (does not store to BigQuery)"
+            title="Transform → agent_activity"
+            description="Parse raw.api_payload JSON into typed columns and MERGE into incontact.agent_activity (the table the Monitor calendar reads)"
+            status={
+              transformMutation.isPending || isTransformActive ? "running" :
+              transformStatus?.status === "completed" ? "success" :
+              transformStatus?.status === "failed" ? "error" :
+              "idle"
+            }
+            onRun={() => transformMutation.mutate()}
+            isRunning={transformMutation.isPending || isTransformActive}
+            runLabel="Transform"
+          >
+            {transformStatus && transformStatus.status !== "idle" && (
+              <div className="p-3 bg-muted/50 border border-border rounded-md text-xs space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="font-medium">Last Transform</span>
+                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${
+                    transformStatus.status === "completed" ? "bg-green-100 text-green-700" :
+                    transformStatus.status === "failed" ? "bg-red-100 text-red-700" :
+                    "bg-blue-100 text-blue-700"
+                  }`}>
+                    {transformStatus.status === "completed" ? <CheckCircle2 className="w-3 h-3" /> :
+                     transformStatus.status === "failed" ? <XCircle className="w-3 h-3" /> :
+                     <Loader2 className="w-3 h-3 animate-spin" />}
+                    {transformStatus.status.toUpperCase()}
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-muted-foreground">
+                  <div><span className="font-medium text-foreground">Step: </span>{transformStatus.step || "—"}</div>
+                  <div><span className="font-medium text-foreground">Rows: </span>{transformStatus.rowsProcessed ?? "—"}</div>
+                  <div><span className="font-medium text-foreground">Duration: </span>{transformStatus.durationFormatted ?? "—"}</div>
+                </div>
+                {transformStatus.error && <div className="text-red-600 mt-1">Error: {transformStatus.error}</div>}
+              </div>
+            )}
+          </PipelineStep>
+
+          <div className="border-t border-border pt-4 mt-2">
+            <div className="text-[11px] uppercase tracking-wider text-muted-foreground font-medium mb-2 px-1">
+              Tools (read-only, not part of pipeline)
+            </div>
+          </div>
+
+          <PipelineStep
+            number={null}
+            title="Quick Preview"
+            description="Hit the NICE API directly and render results in the Results tab. Does not store to BigQuery."
             status={previewMutation.isPending ? "running" : agentData ? "success" : "idle"}
             onRun={() => previewMutation.mutate()}
             isRunning={previewMutation.isPending}
