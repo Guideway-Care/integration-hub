@@ -1,8 +1,12 @@
-# Integration Hub
+# InContact Extractor
 
 ## Overview
 
-Unified integration platform combining the Ingestion Controller Hub (generic API extraction pipeline) and InContact Call Recordings downloader into a single pnpm workspace monorepo. Target GCP project: `guidewaycare-476802`.
+Operational console for the NICE/InContact extraction pipeline — pulls Contacts, Agents, and call Recordings from NICE CXone into BigQuery + GCS. The repo also still contains a generic "extraction controller" framework (Source Systems / Endpoints / Runs / `lib/execution-engine`) inherited from the original Ingestion Controller Hub merger; that half is dormant — the pages are unmounted from the sidebar but routes/tables remain in place pending a Tier 2/3 cleanup. Target GCP project: `guidewaycare-476802`.
+
+## App branding
+
+UI brand is "InContact Extractor". Sidebar is grouped into Overview / Extraction (Contacts, Agents, Recordings) / Operations (Monitor, Live Monitor → /realtime artifact, Audit Log) / Tools (API Explorer, Scripts). The dormant generic-extraction pages (Source Systems, Endpoints, Runs) still have routes registered in `App.tsx` but are intentionally absent from the sidebar.
 
 ## Stack
 
