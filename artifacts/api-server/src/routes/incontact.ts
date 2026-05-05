@@ -705,8 +705,12 @@ async function verifyGoogleOidcToken(req: any): Promise<{ ok: true; email: strin
     const { OAuth2Client } = await import("google-auth-library" as string);
     const client = new OAuth2Client();
     const projectId = process.env.GCP_PROJECT_ID || "guidewaycare-476802";
-    const expectedSa =
+    const rawExpected =
       process.env.SCHEDULER_SERVICE_ACCOUNT || `scheduler-sa@${projectId}.iam.gserviceaccount.com`;
+    const expectedSas = rawExpected
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter((s) => s.length > 0);
     // Derive accepted audiences from the actual incoming request so that any
     // valid Cloud Run alias (hash-based, project-number-based, project-id-based,
     // or a custom domain) works without env config.
@@ -725,8 +729,9 @@ async function verifyGoogleOidcToken(req: any): Promise<{ ok: true; email: strin
     if (!payload?.aud || !acceptedAudiences.includes(String(payload.aud))) {
       return { ok: false, reason: `Audience mismatch: token=${payload?.aud} accepted=${acceptedAudiences.join("|")}` };
     }
-    if (!payload?.email || payload.email !== expectedSa) {
-      return { ok: false, reason: `Wrong service account: ${payload?.email}` };
+    const tokenEmail = (payload?.email || "").trim().toLowerCase();
+    if (!tokenEmail || !expectedSas.includes(tokenEmail)) {
+      return { ok: false, reason: `Wrong service account: token=${payload?.email} expected=${expectedSas.join("|")}` };
     }
     return { ok: true, email: payload.email };
   } catch (err: any) {
