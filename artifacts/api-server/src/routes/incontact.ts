@@ -338,9 +338,25 @@ router.post("/incontact/fetch", async (req, res) => {
       data,
     });
   } catch (err: any) {
-    console.error("[incontact/fetch]", err.message);
     const msg = err?.message || "Failed to fetch from InContact API";
     const isAuth = /UNAUTHENTICATED|invalid authentication|invalid_grant|access[_ ]denied/i.test(msg);
+    const isDev = process.env.NODE_ENV !== "production";
+    // In dev, GCP Secret Manager is unreachable without service-account creds.
+    // Avoid flooding the log with 500 stack traces — return a quiet envelope so
+    // the realtime poller can render "disconnected" instead of triggering
+    // platform error-rate alerts.
+    if (isDev && isAuth) {
+      res.status(200).json({
+        statusCode: 503,
+        statusText: "Service Unavailable (dev: no GCP credentials)",
+        endpoint: req.body?.endpoint,
+        timestamp: new Date().toISOString(),
+        data: null,
+        devNotice: "InContact fetch disabled in dev — GCP Secret Manager unreachable.",
+      });
+      return;
+    }
+    console.error("[incontact/fetch]", msg);
     res.status(500).json({
       error: isAuth
         ? `GCP credential rejected: ${msg}`
