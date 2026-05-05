@@ -1039,16 +1039,29 @@ router.post("/bq/queue-recordings", async (_req, res) => {
 
 const AdhocPullSchema = z.object({
   campaignName: z.string().min(1),
-  dispositionPattern: z.string().min(1),
+  dispositionPattern: z.string().min(1).optional(),
+  dispositionPatterns: z.array(z.string().min(1)).min(1).optional(),
   dateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   dateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-});
+}).refine(
+  (v) => Boolean(v.dispositionPattern) || (v.dispositionPatterns && v.dispositionPatterns.length > 0),
+  { message: "Provide dispositionPattern (string) or dispositionPatterns (string[])" },
+);
+
+function adhocRulesFromBody(body: z.infer<typeof AdhocPullSchema>): PendingRecordingsRule[] {
+  const patterns = body.dispositionPatterns?.length
+    ? body.dispositionPatterns
+    : body.dispositionPattern
+      ? [body.dispositionPattern]
+      : [];
+  return patterns.map((p) => ({ campaignName: body.campaignName, dispositionPattern: p }));
+}
 
 router.post("/bq/queue-recordings/preview", async (req, res) => {
   try {
     const body = AdhocPullSchema.parse(req.body);
     const ids = await findPendingRecordingContactIds({
-      rules: [{ campaignName: body.campaignName, dispositionPattern: body.dispositionPattern }],
+      rules: adhocRulesFromBody(body),
       dateFrom: body.dateFrom,
       dateTo: body.dateTo,
     });
@@ -1067,7 +1080,7 @@ router.post("/bq/queue-recordings/adhoc", async (req, res) => {
   try {
     const body = AdhocPullSchema.parse(req.body);
     const ids = await findPendingRecordingContactIds({
-      rules: [{ campaignName: body.campaignName, dispositionPattern: body.dispositionPattern }],
+      rules: adhocRulesFromBody(body),
       dateFrom: body.dateFrom,
       dateTo: body.dateTo,
     });

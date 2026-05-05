@@ -304,8 +304,8 @@ export default function DashboardPage() {
               <Users className="w-4 h-4 text-green-500" />
               Agents — Daily Activity
             </h3>
-            <Link href="/incontact?tab=monitor">
-              <span className="text-xs text-primary hover:underline cursor-pointer">Open Monitor</span>
+            <Link href="/agents">
+              <span className="text-xs text-primary hover:underline cursor-pointer">Open Agents</span>
             </Link>
           </div>
           {agentDailyLoading ? (

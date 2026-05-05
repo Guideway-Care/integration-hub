@@ -3,6 +3,7 @@ import { api } from "@/lib/api";
 import { useState } from "react";
 import { FileAudio, Download, ChevronLeft, ChevronRight, Search } from "lucide-react";
 import { TableSkeleton } from "@/components/table-skeleton";
+import { AdhocPullCard } from "@/components/adhoc-pull-card";
 
 interface Recording {
   id: string;
@@ -90,6 +91,8 @@ export default function RecordingsPage() {
           </a>
         </div>
       </div>
+
+      <AdhocPullCard />
 
       {!isLoading && !error && allRecordings.length > 0 && (
         <div className="mb-4 relative">

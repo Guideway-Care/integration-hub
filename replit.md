@@ -50,7 +50,7 @@ Operational console for the NICE/InContact extraction pipeline, pulling Contacts
 
 - **NICE/InContact Data Extraction**: Pulls Contacts, Agents, and Call Recordings.
 - **Daily Job Runs Monitoring**: Tracks the status and events of daily InContact extraction jobs.
-- **Call Recording Management**: Includes features for queuing, downloading, and filtering call recordings.
+- **Call Recording Management**: Includes features for queuing, downloading, and filtering call recordings, plus an **Ad-hoc Recording Pull** card on the Recordings page (campaign + multi-disposition + date range → preview + queue & download via `/bq/queue-recordings/adhoc[/run]`, polled via `/bq/adhoc-download-job-status`).
 - **Live Monitoring**: Provides a real-time dashboard for NICE CXone agents, skills, teams, and active calls.
 - **Audit Logging**: Comprehensive trail of platform changes and user actions.
 - **BigQuery Integration**: Stores extracted data and facilitates reporting/analytics.
