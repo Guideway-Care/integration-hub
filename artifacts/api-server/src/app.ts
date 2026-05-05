@@ -19,6 +19,19 @@ void (async () => {
   } catch (err: any) {
     logger.warn({ err: err.message }, "[startup] Failed to sync incontact-agents-daily job (non-fatal)");
   }
+
+  try {
+    const result = await syncSimpleSchedulerJob({
+      jobName: "incontact-contacts-daily",
+      schedule: "30 6 * * *",
+      timeZone: "America/Chicago",
+      path: "/api/incontact/contacts-daily-job",
+      body: { trigger: "scheduled" },
+    });
+    logger.info({ result }, "[startup] Synced incontact-contacts-daily Cloud Scheduler job");
+  } catch (err: any) {
+    logger.warn({ err: err.message }, "[startup] Failed to sync incontact-contacts-daily job (non-fatal)");
+  }
 })();
 
 const app: Express = express();

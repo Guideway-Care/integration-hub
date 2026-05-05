@@ -87,8 +87,9 @@ Express 5 API server. All routes mount at `/api`.
   - `runs.ts` — Extraction run management with audit logging (create, cancel, replay, detail with events)
   - `scheduler.ts` — Cloud Scheduler sync
   - `monitor.ts` — BigQuery contact daily counts for heatmap
-  - `incontact.ts` — InContact API proxy (auth test, fetch, endpoints list)
-  - `bq.ts` — BigQuery staging queue management (summary, add, reset, recordings, queue-recordings, download pipeline orchestration with loader→processor sequencing)
+  - `incontact.ts` — InContact API proxy (auth test, fetch, endpoints list); scheduled daily jobs for Agents (`6:00 AM` Chicago) and Contacts pipeline (`6:30 AM` Chicago, chains Extract→Transform→Queue→Download, awaits both loader & processor completion, uses Chicago-local day boundaries)
+  - `bq.ts` — BigQuery staging queue management (summary, add, reset, recordings, queue-recordings, download pipeline orchestration with loader→processor sequencing); ad-hoc recording pull (`/bq/queue-recordings/preview`, `/bq/queue-recordings/adhoc`); distinct campaigns/dispositions; `loadActiveDailyRules()` falls back to `DEFAULT_DAILY_RULES` (URH/Dignity, "Reached Patient%")
+  - `recording-filter-rules.ts` — CRUD for `recording_filter_rule` table (audit-logged); the daily Queue step reads active rows here
 - Depends on: `@workspace/db`, `@workspace/api-zod`
 - `pnpm --filter @workspace/api-server run dev` — dev server
 - `pnpm --filter @workspace/api-server run build` — production esbuild bundle
@@ -106,7 +107,7 @@ React + Vite frontend dashboard. "API Controller Hub" branding throughout.
   - Run Detail — Metrics cards + event log timeline
   - Run New — Form to trigger manual extraction runs (toast on success/error)
   - Monitor — BigQuery contact volume heatmap
-  - InContact — Unified pipeline page with tabs: Pipeline (4-step flow: Retrieve → Transform → Queue → Download, with Run Now buttons, date filters, monthly calendar grid with DOW averages), Staging Queue (queue management + job triggers), Recordings (call recordings table), API Explorer (raw API testing)
+  - InContact — Unified pipeline page with tabs: Pipeline (4-step flow: Retrieve → Transform → Queue → Download, with Run Now buttons, date filters, monthly calendar grid with DOW averages), Staging Queue (queue management + job triggers), Recordings (call recordings table), Contacts Daily (scheduled-job summary, daily filter rules CRUD, ad-hoc recording pull form), API Explorer (raw API testing)
   - Audit Log — Filterable audit trail of all platform changes with pagination (skeleton loading)
   - Scripts — Copiable BigQuery SQL setup scripts
 - **Shared components**: `table-skeleton.tsx` (TableSkeleton, CardSkeleton, MetricsSkeleton)
@@ -144,7 +145,7 @@ Extraction engine that runs as a Cloud Run Job. Ported from the original Pipelin
 
 Database layer using Drizzle ORM with PostgreSQL. Exports pool, db client, and schema.
 
-- **Tables**: `sourceSystem`, `endpointDefinition`, `endpointParameter`, `extractionRun`, `extractionEvent`, `auditLog`
+- **Tables**: `sourceSystem`, `endpointDefinition`, `endpointParameter`, `extractionRun`, `extractionEvent`, `auditLog`, `recordingFilterRule`
 - `drizzle.config.ts` — requires `DATABASE_URL`
 - Push schema: `pnpm --filter @workspace/db run push`
 

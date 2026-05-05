@@ -1,5 +1,8 @@
 import { Router, type IRouter } from "express";
 import { z } from "zod";
+import { eq } from "drizzle-orm";
+import { db } from "@workspace/db";
+import { recordingFilterRuleTable } from "@workspace/db/schema";
 import { getBigQueryClient, getGCSClient, getGcpProjectId } from "../services/gcp-clients";
 
 const router: IRouter = Router();
@@ -88,10 +91,29 @@ export async function writePendingRecordingsToGcs(
   return { bucket, path: gcsPath, count: contactIds.length };
 }
 
-const DEFAULT_DAILY_RULES: PendingRecordingsRule[] = [
+export const DEFAULT_DAILY_RULES: PendingRecordingsRule[] = [
   { campaignName: "United Regional Health", dispositionPattern: "Reached Patient%" },
   { campaignName: "Dignity", dispositionPattern: "Reached Patient%" },
 ];
+
+/**
+ * Load active filter rules from the DB. Falls back to DEFAULT_DAILY_RULES when
+ * the table is empty so that a freshly-deployed environment still produces the
+ * historical behavior.
+ */
+export async function loadActiveDailyRules(): Promise<{ rules: PendingRecordingsRule[]; usedFallback: boolean }> {
+  const rows = await db
+    .select()
+    .from(recordingFilterRuleTable)
+    .where(eq(recordingFilterRuleTable.isActive, true));
+  if (rows.length === 0) {
+    return { rules: DEFAULT_DAILY_RULES, usedFallback: true };
+  }
+  return {
+    rules: rows.map((r) => ({ campaignName: r.campaignName, dispositionPattern: r.dispositionPattern })),
+    usedFallback: false,
+  };
+}
 
 router.get("/bq/staging-summary", async (req, res) => {
   try {
@@ -302,6 +324,18 @@ async function getAccessToken(): Promise<string> {
   return data.access_token;
 }
 
+export async function triggerLoaderJob() {
+  return triggerInContactCloudRunJob("incontact-call-loader");
+}
+
+export async function triggerProcessorJob() {
+  return triggerInContactCloudRunJob("incontact-call-processor");
+}
+
+export async function awaitExecution(executionName: string, timeoutMs?: number) {
+  return waitForExecution(executionName, timeoutMs);
+}
+
 async function triggerInContactCloudRunJob(jobName: string) {
   const projectId = getGcpProjectId();
   const token = await getAccessToken();
@@ -371,6 +405,17 @@ let transformJob: {
   rowsProcessed?: string | null;
   error?: string;
 } = { status: "idle", step: "" };
+
+export function getContactsTransformJob() {
+  return transformJob;
+}
+
+export function startContactsTransformPipeline(): boolean {
+  if (transformJob.status === "running") return false;
+  transformJob = { status: "running", step: "Starting...", startedAt: new Date().toISOString() };
+  runTransformPipeline();
+  return true;
+}
 
 async function runTransformPipeline() {
   const bqRegional = getBigQueryClient("us-central1");
@@ -943,21 +988,115 @@ router.post("/bq/run-job", async (_req, res) => {
 
 router.post("/bq/queue-recordings", async (_req, res) => {
   try {
-    console.log("[queue-recordings] Running query to find missing recordings...");
-    const contactIds = await findPendingRecordingContactIds({ rules: DEFAULT_DAILY_RULES });
+    const { rules, usedFallback } = await loadActiveDailyRules();
+    console.log(`[queue-recordings] Loaded ${rules.length} rule(s)${usedFallback ? " (fallback)" : ""}`);
+    const contactIds = await findPendingRecordingContactIds({ rules });
     console.log(`[queue-recordings] Found ${contactIds.length} contacts missing recordings`);
 
     if (contactIds.length === 0) {
-      res.json({ queued: 0, message: "No new recordings to queue" });
+      res.json({ queued: 0, rulesUsed: rules.length, usedFallback, message: "No new recordings to queue" });
       return;
     }
 
     const written = await writePendingRecordingsToGcs(contactIds, "call_list/call_list.txt");
     console.log(`[queue-recordings] Wrote ${written.count} contact IDs to gs://${written.bucket}/${written.path}`);
 
-    res.json({ queued: written.count });
+    res.json({ queued: written.count, rulesUsed: rules.length, usedFallback });
   } catch (err: any) {
     console.error("[bq/queue-recordings]", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+const AdhocPullSchema = z.object({
+  campaignName: z.string().min(1),
+  dispositionPattern: z.string().min(1),
+  dateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  dateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
+
+router.post("/bq/queue-recordings/preview", async (req, res) => {
+  try {
+    const body = AdhocPullSchema.parse(req.body);
+    const ids = await findPendingRecordingContactIds({
+      rules: [{ campaignName: body.campaignName, dispositionPattern: body.dispositionPattern }],
+      dateFrom: body.dateFrom,
+      dateTo: body.dateTo,
+    });
+    res.json({ count: ids.length, sample: ids.slice(0, 5) });
+  } catch (err: any) {
+    if (err?.issues) {
+      res.status(400).json({ error: "Invalid request", details: err.issues });
+      return;
+    }
+    console.error("[bq/queue-recordings/preview]", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/bq/queue-recordings/adhoc", async (req, res) => {
+  try {
+    const body = AdhocPullSchema.parse(req.body);
+    const ids = await findPendingRecordingContactIds({
+      rules: [{ campaignName: body.campaignName, dispositionPattern: body.dispositionPattern }],
+      dateFrom: body.dateFrom,
+      dateTo: body.dateTo,
+    });
+    if (ids.length === 0) {
+      res.json({ queued: 0, message: "No matching pending contacts found" });
+      return;
+    }
+    const batchId = `adhoc_${new Date().toISOString().replace(/[:.]/g, "-")}`;
+    const written = await writePendingRecordingsToGcs(ids, `call_list/${batchId}.txt`);
+    console.log(`[queue-recordings/adhoc] Wrote ${written.count} IDs to gs://${written.bucket}/${written.path}`);
+    res.json({
+      queued: written.count,
+      batchId,
+      gcsPath: `gs://${written.bucket}/${written.path}`,
+      filter: body,
+    });
+  } catch (err: any) {
+    if (err?.issues) {
+      res.status(400).json({ error: "Invalid request", details: err.issues });
+      return;
+    }
+    console.error("[bq/queue-recordings/adhoc]", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get("/bq/distinct-campaigns", async (_req, res) => {
+  try {
+    const projectId = getGcpProjectId();
+    const bq = getBigQueryClient("US");
+    const [rows] = await bq.query({
+      query: `SELECT DISTINCT campaign_name FROM \`${projectId}.incontact.calls\` WHERE campaign_name IS NOT NULL ORDER BY campaign_name`,
+    });
+    res.json({ data: rows.map((r: any) => r.campaign_name).filter(Boolean) });
+  } catch (err: any) {
+    console.error("[bq/distinct-campaigns]", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get("/bq/distinct-dispositions", async (req, res) => {
+  try {
+    const projectId = getGcpProjectId();
+    const bq = getBigQueryClient("US");
+    const campaign = (req.query.campaign as string | undefined) || undefined;
+    const params: Record<string, unknown> = {};
+    let where = "primary_disposition_name IS NOT NULL";
+    if (campaign) {
+      where += " AND campaign_name = @campaign";
+      params.campaign = campaign;
+    }
+    const [rows] = await bq.query({
+      query: `SELECT DISTINCT primary_disposition_name FROM \`${projectId}.incontact.calls\` WHERE ${where} ORDER BY primary_disposition_name`,
+      params,
+    });
+    res.json({ data: rows.map((r: any) => r.primary_disposition_name).filter(Boolean) });
+  } catch (err: any) {
+    console.error("[bq/distinct-dispositions]", err.message);
     res.status(500).json({ error: err.message });
   }
 });

@@ -34,7 +34,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { MetricsSkeleton, TableSkeleton } from "@/components/table-skeleton";
 
-type Tab = "pipeline" | "agents" | "monitor" | "staging" | "recordings" | "api-explorer" | "docs";
+type Tab = "pipeline" | "agents" | "monitor" | "staging" | "recordings" | "contacts-daily" | "api-explorer" | "docs";
 
 interface StagingSummary {
   pending: number;
@@ -476,6 +476,415 @@ function ScheduledAgentsJobPanel() {
       {job?.error && (
         <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">
           Error: {job.error}
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface ScheduledContactsJobStatus {
+  status: "idle" | "running" | "completed" | "failed";
+  phase: "extract" | "transform" | "queue" | "download" | "done" | "";
+  date?: string;
+  startedAt?: string;
+  completedAt?: string;
+  durationMs?: number;
+  error?: string;
+  trigger?: "manual" | "scheduled";
+  queuedCount?: number;
+  rulesUsed?: number;
+  usedFallback?: boolean;
+  loaderExecution?: string;
+  processorExecution?: string;
+}
+
+function ScheduledContactsJobPanel() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const { data } = useQuery({
+    queryKey: ["contacts-daily-job-status"],
+    queryFn: () =>
+      api.get<{ data: ScheduledContactsJobStatus; yesterdayChicago: string }>(
+        "/incontact/contacts-daily-job/status",
+      ),
+    refetchInterval: (q) => (q.state.data?.data?.status === "running" ? 3000 : 30000),
+  });
+  const mutation = useMutation({
+    mutationFn: () => api.post<{ message: string; date: string }>("/incontact/contacts-daily-job", {}),
+    onSuccess: (res) => {
+      toast({ title: "Started", description: `Contacts daily job started for ${res.date}` });
+      queryClient.invalidateQueries({ queryKey: ["contacts-daily-job-status"] });
+    },
+    onError: (err: any) =>
+      toast({ title: "Failed to start", description: err?.message || "Unknown error", variant: "destructive" }),
+  });
+
+  const job = data?.data;
+  const yesterday = data?.yesterdayChicago;
+  const statusBadge =
+    job?.status === "completed" ? "bg-green-100 text-green-700"
+    : job?.status === "failed" ? "bg-red-100 text-red-700"
+    : job?.status === "running" ? "bg-blue-100 text-blue-700"
+    : "bg-gray-100 text-gray-700";
+
+  return (
+    <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold flex items-center gap-2">
+            <Clock className="w-4 h-4 text-muted-foreground" />
+            Scheduled Daily Run (Contacts pipeline)
+          </h3>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Runs every morning at <span className="font-medium">6:30 AM America/Chicago</span> for the previous day. Chains
+            <span className="font-medium"> Extract → Transform → Queue → Download</span> using the active filter rules below.
+          </p>
+        </div>
+        <button
+          onClick={() => mutation.mutate()}
+          disabled={mutation.isPending || job?.status === "running"}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-border rounded-md text-xs font-medium hover:bg-muted disabled:opacity-50 whitespace-nowrap"
+        >
+          {(mutation.isPending || job?.status === "running") ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+          Run for yesterday now
+        </button>
+      </div>
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-medium ${statusBadge}`}>
+          {job?.status === "completed" ? <CheckCircle2 className="w-3 h-3" /> :
+           job?.status === "failed" ? <XCircle className="w-3 h-3" /> :
+           job?.status === "running" ? <Loader2 className="w-3 h-3 animate-spin" /> :
+           <Clock className="w-3 h-3" />}
+          {job?.status ?? "idle"}
+          {job?.status === "running" && job.phase ? ` · ${job.phase}` : ""}
+        </span>
+        {job?.date && <span className="text-muted-foreground">date: <span className="font-medium text-foreground">{job.date}</span></span>}
+        {job?.trigger && <span className="text-muted-foreground">trigger: <span className="font-medium text-foreground">{job.trigger}</span></span>}
+        {yesterday && <span className="text-muted-foreground">next-up target: <span className="font-medium text-foreground">{yesterday}</span></span>}
+        {typeof job?.queuedCount === "number" && <span className="text-muted-foreground">queued: <span className="font-medium text-foreground">{job.queuedCount.toLocaleString()}</span></span>}
+        {typeof job?.rulesUsed === "number" && (
+          <span className="text-muted-foreground">
+            rules: <span className="font-medium text-foreground">{job.rulesUsed}{job.usedFallback ? " (fallback)" : ""}</span>
+          </span>
+        )}
+        {job?.startedAt && <span className="text-muted-foreground">started: <span className="font-medium text-foreground">{new Date(job.startedAt).toLocaleString()}</span></span>}
+        {job?.completedAt && <span className="text-muted-foreground">finished: <span className="font-medium text-foreground">{new Date(job.completedAt).toLocaleString()}</span></span>}
+        {typeof job?.durationMs === "number" && <span className="text-muted-foreground">duration: <span className="font-medium text-foreground">{Math.round(job.durationMs / 1000)}s</span></span>}
+      </div>
+      {job?.error && (
+        <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">
+          Error: {job.error}
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface FilterRule {
+  ruleId: string;
+  campaignName: string;
+  dispositionPattern: string;
+  description: string | null;
+  isActive: boolean;
+}
+
+function FilterRulesPanel() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const { data, isLoading } = useQuery({
+    queryKey: ["recording-filter-rules"],
+    queryFn: () => api.get<{ data: FilterRule[] }>("/recording-filter-rules"),
+  });
+  const { data: jobStatus } = useQuery({
+    queryKey: ["contacts-daily-job-status"],
+    queryFn: () =>
+      api.get<{ data: ScheduledContactsJobStatus; yesterdayChicago: string }>(
+        "/incontact/contacts-daily-job/status",
+      ),
+  });
+  const { data: campaigns } = useQuery({
+    queryKey: ["bq-campaigns"],
+    queryFn: () => api.get<{ data: string[] }>("/bq/distinct-campaigns").catch(() => ({ data: [] })),
+  });
+  const [form, setForm] = useState({ campaignName: "", dispositionPattern: "Reached Patient%", description: "" });
+  const createMutation = useMutation({
+    mutationFn: (body: typeof form) => api.post("/recording-filter-rules", body),
+    onSuccess: () => {
+      toast({ title: "Rule created" });
+      setForm({ campaignName: "", dispositionPattern: "Reached Patient%", description: "" });
+      queryClient.invalidateQueries({ queryKey: ["recording-filter-rules"] });
+    },
+    onError: (err: any) => toast({ title: "Create failed", description: err?.message || "Unknown error", variant: "destructive" }),
+  });
+  const toggleMutation = useMutation({
+    mutationFn: (rule: FilterRule) =>
+      api.put(`/recording-filter-rules/${rule.ruleId}`, { isActive: !rule.isActive }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["recording-filter-rules"] }),
+    onError: (err: any) => toast({ title: "Update failed", description: err?.message || "Unknown error", variant: "destructive" }),
+  });
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/recording-filter-rules/${id}`),
+    onSuccess: () => {
+      toast({ title: "Rule deleted" });
+      queryClient.invalidateQueries({ queryKey: ["recording-filter-rules"] });
+    },
+    onError: (err: any) => toast({ title: "Delete failed", description: err?.message || "Unknown error", variant: "destructive" }),
+  });
+
+  const rules = data?.data ?? [];
+  const activeRules = rules.filter((r) => r.isActive);
+  const usingFallback =
+    !isLoading &&
+    (activeRules.length === 0 || jobStatus?.data?.usedFallback === true);
+
+  return (
+    <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+      <div>
+        <h3 className="text-sm font-semibold flex items-center gap-2">
+          <Filter className="w-4 h-4 text-muted-foreground" />
+          Daily Filter Rules
+        </h3>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          Combinations of <code className="text-[11px] bg-muted px-1 rounded">campaign_name</code> + <code className="text-[11px] bg-muted px-1 rounded">primary_disposition_name LIKE …</code> that the daily Queue step uses to find calls missing a recording.
+          {usingFallback && (
+            <span className="ml-1 text-yellow-600">No active rules — falling back to defaults (URH + Dignity, &quot;Reached Patient%&quot;).</span>
+          )}
+        </p>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-left border-b border-border">
+              <th className="px-2 py-1.5 font-medium text-muted-foreground">Active</th>
+              <th className="px-2 py-1.5 font-medium text-muted-foreground">Campaign</th>
+              <th className="px-2 py-1.5 font-medium text-muted-foreground">Disposition Pattern</th>
+              <th className="px-2 py-1.5 font-medium text-muted-foreground">Description</th>
+              <th className="px-2 py-1.5 font-medium text-muted-foreground"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {isLoading ? (
+              <tr><td colSpan={5} className="px-2 py-3 text-muted-foreground">Loading…</td></tr>
+            ) : rules.length === 0 ? (
+              <tr><td colSpan={5} className="px-2 py-3 text-muted-foreground italic">No rules defined.</td></tr>
+            ) : rules.map((r) => (
+              <tr key={r.ruleId} className="border-b border-border/50">
+                <td className="px-2 py-1.5">
+                  <input
+                    type="checkbox"
+                    checked={r.isActive}
+                    onChange={() => toggleMutation.mutate(r)}
+                    disabled={toggleMutation.isPending}
+                    className="cursor-pointer"
+                  />
+                </td>
+                <td className="px-2 py-1.5 font-medium">{r.campaignName}</td>
+                <td className="px-2 py-1.5"><code className="text-[11px] bg-muted px-1 rounded">{r.dispositionPattern}</code></td>
+                <td className="px-2 py-1.5 text-muted-foreground">{r.description || "—"}</td>
+                <td className="px-2 py-1.5 text-right">
+                  <button
+                    onClick={() => {
+                      if (confirm(`Delete rule for "${r.campaignName}"?`)) deleteMutation.mutate(r.ruleId);
+                    }}
+                    disabled={deleteMutation.isPending}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 border border-border rounded text-[11px] hover:bg-muted disabled:opacity-50"
+                    title="Delete"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="border-t border-border pt-3">
+        <div className="text-xs font-medium mb-2">Add a rule</div>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+          <input
+            list="campaign-list"
+            value={form.campaignName}
+            onChange={(e) => setForm({ ...form, campaignName: e.target.value })}
+            placeholder="Campaign name"
+            className="px-2 py-1.5 border border-input rounded-md text-xs bg-background"
+          />
+          <datalist id="campaign-list">
+            {(campaigns?.data ?? []).map((c) => <option key={c} value={c} />)}
+          </datalist>
+          <input
+            value={form.dispositionPattern}
+            onChange={(e) => setForm({ ...form, dispositionPattern: e.target.value })}
+            placeholder="Disposition LIKE pattern (e.g. Reached Patient%)"
+            className="px-2 py-1.5 border border-input rounded-md text-xs bg-background"
+          />
+          <input
+            value={form.description}
+            onChange={(e) => setForm({ ...form, description: e.target.value })}
+            placeholder="Description (optional)"
+            className="px-2 py-1.5 border border-input rounded-md text-xs bg-background"
+          />
+          <button
+            onClick={() => createMutation.mutate(form)}
+            disabled={createMutation.isPending || !form.campaignName.trim() || !form.dispositionPattern.trim()}
+            className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 border border-border rounded-md text-xs font-medium hover:bg-muted disabled:opacity-50"
+          >
+            {createMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+            Add rule
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AdHocPullPanel() {
+  const { toast } = useToast();
+  const { data: campaigns } = useQuery({
+    queryKey: ["bq-campaigns"],
+    queryFn: () => api.get<{ data: string[] }>("/bq/distinct-campaigns").catch(() => ({ data: [] })),
+  });
+
+  const today = new Date().toISOString().slice(0, 10);
+  const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+  const [form, setForm] = useState({
+    campaignName: "",
+    dispositionPattern: "Reached Patient%",
+    dateFrom: sevenDaysAgo,
+    dateTo: today,
+  });
+
+  const { data: dispositions } = useQuery({
+    queryKey: ["bq-dispositions", form.campaignName],
+    queryFn: () =>
+      api
+        .get<{ data: string[] }>(
+          form.campaignName
+            ? `/bq/distinct-dispositions?campaign=${encodeURIComponent(form.campaignName)}`
+            : "/bq/distinct-dispositions",
+        )
+        .catch(() => ({ data: [] })),
+  });
+
+  const previewMutation = useMutation({
+    mutationFn: () => api.post<{ count: number; sample: string[] }>("/bq/queue-recordings/preview", form),
+  });
+
+  const adhocMutation = useMutation({
+    mutationFn: () =>
+      api.post<{ queued: number; batchId?: string; gcsPath?: string; message?: string }>(
+        "/bq/queue-recordings/adhoc",
+        form,
+      ),
+    onSuccess: (res) => {
+      if (res.queued > 0) {
+        toast({
+          title: "Batch queued",
+          description: `${res.queued.toLocaleString()} contact IDs written to ${res.batchId}.txt`,
+        });
+      } else {
+        toast({ title: "Nothing to queue", description: res.message || "No matching pending contacts" });
+      }
+    },
+    onError: (err: any) =>
+      toast({ title: "Queue failed", description: err?.message || "Unknown error", variant: "destructive" }),
+  });
+
+  return (
+    <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+      <div>
+        <h3 className="text-sm font-semibold flex items-center gap-2">
+          <Send className="w-4 h-4 text-muted-foreground" />
+          Ad-hoc Recording Pull
+        </h3>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          One-off backfill: pick a campaign, disposition pattern, and date range. Writes a separate <code className="text-[11px] bg-muted px-1 rounded">call_list/adhoc_*.txt</code> batch (does not overwrite the daily file).
+        </p>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+        <div>
+          <label className="block text-[11px] font-medium mb-1">Campaign</label>
+          <input
+            list="adhoc-campaign-list"
+            value={form.campaignName}
+            onChange={(e) => setForm({ ...form, campaignName: e.target.value })}
+            placeholder="Campaign name"
+            className="w-full px-2 py-1.5 border border-input rounded-md text-xs bg-background"
+          />
+          <datalist id="adhoc-campaign-list">
+            {(campaigns?.data ?? []).map((c) => <option key={c} value={c} />)}
+          </datalist>
+        </div>
+        <div>
+          <label className="block text-[11px] font-medium mb-1">Disposition LIKE pattern</label>
+          <input
+            list="adhoc-disposition-list"
+            value={form.dispositionPattern}
+            onChange={(e) => setForm({ ...form, dispositionPattern: e.target.value })}
+            placeholder="e.g. Reached Patient%"
+            className="w-full px-2 py-1.5 border border-input rounded-md text-xs bg-background"
+          />
+          <datalist id="adhoc-disposition-list">
+            {(dispositions?.data ?? []).map((d) => <option key={d} value={d} />)}
+          </datalist>
+        </div>
+        <div>
+          <label className="block text-[11px] font-medium mb-1">Date from</label>
+          <input
+            type="date"
+            value={form.dateFrom}
+            onChange={(e) => setForm({ ...form, dateFrom: e.target.value })}
+            className="w-full px-2 py-1.5 border border-input rounded-md text-xs bg-background"
+          />
+        </div>
+        <div>
+          <label className="block text-[11px] font-medium mb-1">Date to</label>
+          <input
+            type="date"
+            value={form.dateTo}
+            onChange={(e) => setForm({ ...form, dateTo: e.target.value })}
+            className="w-full px-2 py-1.5 border border-input rounded-md text-xs bg-background"
+          />
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          onClick={() => previewMutation.mutate()}
+          disabled={previewMutation.isPending || !form.campaignName.trim() || !form.dispositionPattern.trim()}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-border rounded-md text-xs font-medium hover:bg-muted disabled:opacity-50"
+        >
+          {previewMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Search className="w-3 h-3" />}
+          Preview count
+        </button>
+        <button
+          onClick={() => {
+            if (confirm(`Queue an ad-hoc recordings batch for ${form.campaignName} / ${form.dispositionPattern} from ${form.dateFrom} to ${form.dateTo}?`)) {
+              adhocMutation.mutate();
+            }
+          }}
+          disabled={adhocMutation.isPending || !form.campaignName.trim() || !form.dispositionPattern.trim()}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-primary text-primary-foreground rounded-md text-xs font-medium hover:bg-primary/90 disabled:opacity-50"
+        >
+          {adhocMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
+          Queue batch
+        </button>
+        {previewMutation.isSuccess && (
+          <span className="text-xs text-muted-foreground">
+            Preview: <span className="font-medium text-foreground">{previewMutation.data.count.toLocaleString()}</span> matching pending contacts
+          </span>
+        )}
+        {previewMutation.isError && (
+          <span className="text-xs text-red-600">Preview failed: {(previewMutation.error as Error).message}</span>
+        )}
+      </div>
+      {adhocMutation.isSuccess && adhocMutation.data.queued > 0 && (
+        <div className="text-xs text-green-700 bg-green-50 border border-green-200 rounded px-2 py-1">
+          Queued <span className="font-medium">{adhocMutation.data.queued.toLocaleString()}</span> contact IDs as <code className="bg-white px-1 rounded">{adhocMutation.data.batchId}.txt</code>.
+          <span className="block text-muted-foreground mt-0.5">{adhocMutation.data.gcsPath}</span>
+          <span className="block text-muted-foreground mt-0.5">
+            Note: the daily Download step processes <code className="bg-white px-1 rounded">call_list/call_list.txt</code>. To download this batch now, copy/rename it to <code className="bg-white px-1 rounded">call_list.txt</code> in GCS, then click <span className="font-medium">Run</span> on Step 4.
+          </span>
         </div>
       )}
     </div>
@@ -1051,6 +1460,7 @@ export default function InContactPage() {
     { id: "monitor", label: "Monitor" },
     { id: "staging", label: "Staging Queue" },
     { id: "recordings", label: "Recordings" },
+    { id: "contacts-daily", label: "Contacts Daily" },
     { id: "api-explorer", label: "API Explorer" },
     { id: "docs", label: "Documentation" },
   ];
@@ -2067,6 +2477,14 @@ export default function InContactPage() {
               </div>
             </>
           )}
+        </div>
+      )}
+
+      {tab === "contacts-daily" && (
+        <div className="space-y-4">
+          <ScheduledContactsJobPanel />
+          <FilterRulesPanel />
+          <AdHocPullPanel />
         </div>
       )}
 

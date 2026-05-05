@@ -678,6 +678,32 @@ async function runAgentsDailyExtraction(startDate: string, endDate: string) {
   console.log(`[agents-daily] All days done. Success: ${allSuccess}`);
 }
 
+function chicagoDayStartInUTC(dateStr: string): Date {
+  // dateStr = "YYYY-MM-DD" interpreted as a Chicago calendar day.
+  // Returns the UTC instant when Chicago local time crosses 00:00 on that date.
+  const [y, m, d] = dateStr.split("-").map(Number);
+  // Probe at 12:00 UTC of the same calendar date — guaranteed to fall on the
+  // same Chicago calendar day (Chicago is UTC-5 or UTC-6, so 12:00Z = 06:00 or 07:00 Chicago).
+  const probe = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Chicago",
+    hour: "2-digit",
+    hour12: false,
+  });
+  const hourPart = fmt.formatToParts(probe).find((p) => p.type === "hour");
+  const chicagoHourAtNoonUTC = parseInt(hourPart!.value, 10) % 24;
+  // Offset (UTC ahead of Chicago) at noon UTC; midnight Chicago is at the same offset.
+  const offsetHours = 12 - chicagoHourAtNoonUTC;
+  return new Date(Date.UTC(y, m - 1, d, offsetHours, 0, 0));
+}
+
+function addDaysISO(dateStr: string, days: number): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const u = new Date(Date.UTC(y, m - 1, d));
+  u.setUTCDate(u.getUTCDate() + days);
+  return `${u.getUTCFullYear()}-${String(u.getUTCMonth() + 1).padStart(2, "0")}-${String(u.getUTCDate()).padStart(2, "0")}`;
+}
+
 function getYesterdayInChicago(): string {
   const fmt = new Intl.DateTimeFormat("en-CA", {
     timeZone: "America/Chicago",
@@ -872,6 +898,244 @@ router.post("/incontact/extract-agents-daily", async (req, res) => {
 
 router.get("/incontact/extract-agents-daily/status", async (_req, res) => {
   res.json({ data: agentsDailyJob });
+});
+
+// =============================================================================
+// Contacts daily scheduled pipeline (mirrors agents pattern)
+// Steps: extract → transform → queue-recordings → download (loader+processor)
+// =============================================================================
+
+let contactsDailyJob: {
+  status: "idle" | "running" | "completed" | "failed";
+  totalDays: number;
+  completedDays: number;
+  currentDay?: string;
+  results: { date: string; runId: string; status: string }[];
+  error?: string;
+} = { status: "idle", totalDays: 0, completedDays: 0, results: [] };
+
+async function runContactsDailyExtraction(startDate: string, endDate: string) {
+  const ENDPOINT_ID = "nice-cxone-contacts";
+  // startDate/endDate are Chicago calendar dates. Build per-day windows whose
+  // boundaries are Chicago-local midnight → next Chicago-local midnight,
+  // expressed as UTC instants (DST-correct).
+  const days: { dayStart: string; dayEnd: string; label: string }[] = [];
+  let label = startDate;
+  while (label <= endDate) {
+    const startUTC = chicagoDayStartInUTC(label);
+    const nextLabel = addDaysISO(label, 1);
+    const endUTC = chicagoDayStartInUTC(nextLabel);
+    days.push({
+      dayStart: startUTC.toISOString().replace(".000Z", "Z"),
+      dayEnd: endUTC.toISOString().replace(".000Z", "Z"),
+      label,
+    });
+    label = nextLabel;
+  }
+
+  contactsDailyJob = { status: "running", totalDays: days.length, completedDays: 0, results: [] };
+
+  for (const day of days) {
+    contactsDailyJob.currentDay = day.label;
+    console.log(`[contacts-daily] Processing ${day.label} (${contactsDailyJob.completedDays + 1}/${days.length})`);
+    try {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const lockResult = await client.query(
+          `SELECT run_id, status FROM extraction_run WHERE endpoint_id = $1 AND status IN ('PENDING', 'RUNNING') FOR UPDATE`,
+          [ENDPOINT_ID],
+        );
+        if (lockResult.rows.length > 0) {
+          await client.query("ROLLBACK");
+          console.log(`[contacts-daily] Waiting for active run ${lockResult.rows[0].run_id} to finish...`);
+          const activeStatus = await waitForRunCompletion(lockResult.rows[0].run_id);
+          console.log(`[contacts-daily] Active run finished with status: ${activeStatus}`);
+        } else {
+          await client.query("ROLLBACK");
+        }
+      } finally {
+        client.release();
+      }
+
+      const [created] = await db.insert(extractionRunTable).values({
+        sourceSystemId: "nice-cxone",
+        endpointId: ENDPOINT_ID,
+        runType: "MANUAL",
+        requestedBy: "control-plane-contacts-daily",
+        windowStartTs: new Date(day.dayStart),
+        windowEndTs: new Date(day.dayEnd),
+        status: "PENDING",
+      }).returning();
+
+      const execName = await triggerExtractionJobForRun(created.runId);
+      if (execName) {
+        await db.update(extractionRunTable)
+          .set({ cloudRunJobName: EXTRACTION_JOB_NAME, cloudRunExecutionId: execName })
+          .where(eq(extractionRunTable.runId, created.runId));
+      }
+
+      const finalStatus = await waitForRunCompletion(created.runId, 600000);
+      contactsDailyJob.results.push({ date: day.label, runId: created.runId, status: finalStatus });
+      contactsDailyJob.completedDays++;
+      console.log(`[contacts-daily] ${day.label} finished: ${finalStatus}`);
+    } catch (err: any) {
+      console.error(`[contacts-daily] ${day.label} failed:`, err.message);
+      contactsDailyJob.results.push({ date: day.label, runId: "error", status: err.message });
+      contactsDailyJob.completedDays++;
+    }
+  }
+
+  const allSuccess = contactsDailyJob.results.every((r) => r.status === "COMPLETED");
+  contactsDailyJob.status = allSuccess ? "completed" : "failed";
+  contactsDailyJob.currentDay = undefined;
+  console.log(`[contacts-daily] All days done. Success: ${allSuccess}`);
+}
+
+let contactsScheduledJob: {
+  status: "idle" | "running" | "completed" | "failed";
+  phase: "extract" | "transform" | "queue" | "download" | "done" | "";
+  date?: string;
+  startedAt?: string;
+  completedAt?: string;
+  durationMs?: number;
+  error?: string;
+  trigger?: "manual" | "scheduled";
+  queuedCount?: number;
+  rulesUsed?: number;
+  usedFallback?: boolean;
+  loaderExecution?: string;
+  processorExecution?: string;
+} = { status: "idle", phase: "" };
+
+export function getContactsScheduledJob() {
+  return contactsScheduledJob;
+}
+
+async function runContactsScheduledJob(date: string, trigger: "manual" | "scheduled") {
+  const startTs = Date.now();
+  contactsScheduledJob = {
+    status: "running",
+    phase: "extract",
+    date,
+    startedAt: new Date().toISOString(),
+    trigger,
+  };
+  try {
+    // Phase 1: Extract
+    await runContactsDailyExtraction(date, date);
+    if (contactsDailyJob.status !== "completed") {
+      const failed = contactsDailyJob.results.filter((r) => r.status !== "COMPLETED");
+      throw new Error(`Extraction did not complete cleanly: ${failed.map((r) => `${r.date}=${r.status}`).join(", ")}`);
+    }
+
+    // Phase 2: Transform
+    contactsScheduledJob.phase = "transform";
+    const bqMod = await import("./bq");
+    if (!bqMod.startContactsTransformPipeline()) {
+      throw new Error("Contacts transform was already running");
+    }
+    while (bqMod.getContactsTransformJob().status === "running") {
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+    const transform = bqMod.getContactsTransformJob();
+    if (transform.status !== "completed") {
+      throw new Error(`Transform failed: ${transform.error || "unknown error"}`);
+    }
+
+    // Phase 3: Queue recordings (uses DB rules, falls back to defaults)
+    contactsScheduledJob.phase = "queue";
+    const { rules, usedFallback } = await bqMod.loadActiveDailyRules();
+    contactsScheduledJob.rulesUsed = rules.length;
+    contactsScheduledJob.usedFallback = usedFallback;
+    const ids = await bqMod.findPendingRecordingContactIds({ rules });
+    contactsScheduledJob.queuedCount = ids.length;
+
+    if (ids.length === 0) {
+      // Nothing to download; mark complete after queue phase
+      contactsScheduledJob = {
+        ...contactsScheduledJob,
+        status: "completed",
+        phase: "done",
+        completedAt: new Date().toISOString(),
+        durationMs: Date.now() - startTs,
+      };
+      console.log(`[contacts-scheduled] Completed for ${date} — no new recordings to download`);
+      return;
+    }
+    await bqMod.writePendingRecordingsToGcs(ids, "call_list/call_list.txt");
+
+    // Phase 4: Download (loader → processor)
+    contactsScheduledJob.phase = "download";
+    const cr = await import("./bq");
+    // Reuse the same triggers used by /bq/run-job — they're in bq.ts but private.
+    // We expose a tiny helper through a fetch to our own /bq/run-job? No — run-job is fire-and-forget.
+    // Instead, replicate the chain inline using the exported triggers we just imported.
+    // (triggerInContactCloudRunJob and waitForExecution aren't exported; we add wrappers below.)
+    const { triggerLoaderJob, triggerProcessorJob, awaitExecution } = cr;
+    const loader = await triggerLoaderJob();
+    contactsScheduledJob.loaderExecution = loader.executionName;
+    const loaderStatus = await awaitExecution(loader.executionName);
+    if (!loaderStatus.succeeded) {
+      throw new Error(`Loader failed: ${loaderStatus.error || "unknown error"}`);
+    }
+    const processor = await triggerProcessorJob();
+    contactsScheduledJob.processorExecution = processor.executionName;
+    const processorStatus = await awaitExecution(processor.executionName);
+    if (!processorStatus.succeeded) {
+      throw new Error(`Processor failed: ${processorStatus.error || "unknown error"}`);
+    }
+
+    contactsScheduledJob = {
+      ...contactsScheduledJob,
+      status: "completed",
+      phase: "done",
+      completedAt: new Date().toISOString(),
+      durationMs: Date.now() - startTs,
+    };
+    console.log(`[contacts-scheduled] Completed for ${date} in ${Math.round((Date.now() - startTs) / 1000)}s`);
+  } catch (err: any) {
+    contactsScheduledJob = {
+      ...contactsScheduledJob,
+      status: "failed",
+      error: err.message,
+      completedAt: new Date().toISOString(),
+      durationMs: Date.now() - startTs,
+    };
+    console.error(`[contacts-scheduled] Failed for ${date}:`, err.message);
+  }
+}
+
+router.post("/incontact/contacts-daily-job", async (req, res) => {
+  try {
+    const claimedTrigger: "manual" | "scheduled" = req.body?.trigger === "scheduled" ? "scheduled" : "manual";
+    if (claimedTrigger === "scheduled" && process.env.NODE_ENV !== "development") {
+      const verdict = await verifyGoogleOidcToken(req);
+      if (!verdict.ok) {
+        console.warn(`[contacts-daily-job] OIDC rejected: ${verdict.reason}`);
+        res.status(401).json({ error: "Unauthorized scheduler call", reason: verdict.reason });
+        return;
+      }
+    }
+    if (contactsScheduledJob.status === "running") {
+      res.status(409).json({
+        error: "Contacts daily job already running",
+        phase: contactsScheduledJob.phase,
+        date: contactsScheduledJob.date,
+      });
+      return;
+    }
+    const date: string = (req.body?.date as string) || getYesterdayInChicago();
+    runContactsScheduledJob(date, claimedTrigger);
+    res.json({ message: "Contacts daily job started", date, trigger: claimedTrigger });
+  } catch (err: any) {
+    console.error("[incontact/contacts-daily-job]", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get("/incontact/contacts-daily-job/status", async (_req, res) => {
+  res.json({ data: contactsScheduledJob, yesterdayChicago: getYesterdayInChicago() });
 });
 
 export default router;

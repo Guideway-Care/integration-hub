@@ -11,6 +11,7 @@ import bqRouter from "./bq";
 import dashboardRouter from "./dashboard";
 import auditRouter from "./audit";
 import exportRouter from "./export";
+import recordingFilterRulesRouter from "./recording-filter-rules";
 
 const router: IRouter = Router();
 
@@ -26,5 +27,6 @@ router.use(schedulerRouter);
 router.use(monitorRouter);
 router.use(incontactRouter);
 router.use(bqRouter);
+router.use(recordingFilterRulesRouter);
 
 export default router;
