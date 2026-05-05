@@ -985,7 +985,12 @@ function AdHocPullPanel() {
 export default function InContactPage() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const [tab, setTab] = useState<Tab>("pipeline");
+  const [tab, setTab] = useState<Tab>(() => {
+    if (typeof window === "undefined") return "pipeline";
+    const validTabs: Tab[] = ["pipeline", "agents", "monitor", "staging", "recordings", "contacts-daily", "api-explorer", "docs"];
+    const param = new URLSearchParams(window.location.search).get("tab") as Tab | null;
+    return param && validTabs.includes(param) ? param : "pipeline";
+  });
   const [callIds, setCallIds] = useState("");
   const [batchId, setBatchId] = useState("");
   const [stagingPage, setStagingPage] = useState(0);

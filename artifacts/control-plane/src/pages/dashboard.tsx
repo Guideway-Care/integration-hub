@@ -185,7 +185,7 @@ export default function DashboardPage() {
           label="Staged Calls"
           value={d.incontact.staging.total}
           icon={Phone}
-          href="/incontact"
+          href="/incontact?tab=staging"
           color="text-blue-500"
           sub={`${d.incontact.staging.pending} pending`}
         />
@@ -200,7 +200,7 @@ export default function DashboardPage() {
           label="Failed Downloads"
           value={d.incontact.staging.failed}
           icon={AlertTriangle}
-          href="/incontact"
+          href="/incontact?tab=staging"
           color={d.incontact.staging.failed > 0 ? "text-red-500" : "text-muted-foreground"}
         />
       </div>

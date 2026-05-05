@@ -56,7 +56,7 @@ const navSections: NavSection[] = [
   {
     label: "Tools",
     items: [
-      { label: "API Explorer", href: "/incontact", icon: Plug },
+      { label: "API Explorer", href: "/incontact?tab=api-explorer", icon: Plug },
       { label: "Scripts", href: "/scripts", icon: Settings },
     ],
   },
