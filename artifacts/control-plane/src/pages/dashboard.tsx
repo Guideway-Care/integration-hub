@@ -292,7 +292,7 @@ export default function DashboardPage() {
           {contactDailyLoading ? (
             <Skeleton className="h-48 w-full" />
           ) : (contactDaily?.data?.length ?? 0) > 0 ? (
-            <ContactCalendar rows={contactDaily!.data} monthsPerPage={2} />
+            <ContactCalendar rows={contactDaily!.data} monthsPerPage={3} />
           ) : (
             <div className="text-center py-8 text-sm text-muted-foreground">No contact data available.</div>
           )}
@@ -311,7 +311,7 @@ export default function DashboardPage() {
           {agentDailyLoading ? (
             <Skeleton className="h-48 w-full" />
           ) : (agentDaily?.data?.length ?? 0) > 0 ? (
-            <ContactCalendar rows={agentDaily!.data} monthsPerPage={2} />
+            <ContactCalendar rows={agentDaily!.data} monthsPerPage={3} />
           ) : (
             <div className="text-center py-8 text-sm text-muted-foreground">No agent activity data available. Run the agents extraction and transform first.</div>
           )}
