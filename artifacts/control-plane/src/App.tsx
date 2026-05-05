@@ -4,15 +4,11 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import Layout from "@/components/layout";
 import DashboardPage from "@/pages/dashboard";
-import SourceSystemsPage from "@/pages/source-systems";
-import EndpointsPage from "@/pages/endpoints";
 import RunsPage from "@/pages/runs";
 import RunDetailPage from "@/pages/run-detail";
-import RunNewPage from "@/pages/run-new";
 import MonitorPage from "@/pages/monitor";
 import InContactPage from "@/pages/incontact";
-import RealtimePage from "@/pages/realtime";
-import StagingPage from "@/pages/staging";
+import AgentsPage from "@/pages/agents";
 import RecordingsPage from "@/pages/recordings";
 import AuditPage from "@/pages/audit";
 import ScriptsPage from "@/pages/scripts";
@@ -32,15 +28,11 @@ function Router() {
     <Layout>
       <Switch>
         <Route path="/" component={DashboardPage} />
-        <Route path="/source-systems" component={SourceSystemsPage} />
-        <Route path="/endpoints" component={EndpointsPage} />
         <Route path="/runs" component={RunsPage} />
-        <Route path="/runs/new" component={RunNewPage} />
         <Route path="/runs/:id" component={RunDetailPage} />
         <Route path="/monitor" component={MonitorPage} />
         <Route path="/incontact" component={InContactPage} />
-        <Route path="/realtime" component={RealtimePage} />
-        <Route path="/staging" component={StagingPage} />
+        <Route path="/agents" component={AgentsPage} />
         <Route path="/recordings" component={RecordingsPage} />
         <Route path="/audit" component={AuditPage} />
         <Route path="/scripts" component={ScriptsPage} />

@@ -43,7 +43,7 @@ export default function RunsPage() {
     mutationFn: (id: string) => api.patch(`/runs/${id}/cancel`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["runs"] });
-      toast({ title: "Run cancelled", description: "The extraction run has been cancelled." });
+      toast({ title: "Run cancelled", description: "The daily job run has been cancelled." });
     },
     onError: (err) => {
       toast({ title: "Cancel failed", description: (err as Error).message, variant: "destructive" });
@@ -54,7 +54,7 @@ export default function RunsPage() {
     mutationFn: (id: string) => api.post(`/runs/${id}/replay`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["runs"] });
-      toast({ title: "Replay started", description: "A new extraction run has been triggered." });
+      toast({ title: "Replay started", description: "A new daily job run has been triggered." });
     },
     onError: (err) => {
       toast({ title: "Replay failed", description: (err as Error).message, variant: "destructive" });
@@ -67,29 +67,24 @@ export default function RunsPage() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Extraction Runs</h1>
+          <h1 className="text-2xl font-bold text-foreground">Daily Job Runs</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            {data?.meta?.total ?? 0} total runs
+            History of scheduled NICE/InContact daily jobs · {data?.meta?.total ?? 0} total
           </p>
         </div>
-        <Link href="/runs/new">
-          <button className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:opacity-90">
-            <Play className="w-4 h-4" /> New Run
-          </button>
-        </Link>
       </div>
 
       {isLoading ? (
         <TableSkeleton rows={6} cols={9} />
       ) : error ? (
         <div className="border border-destructive/30 rounded-lg p-4 bg-destructive/5">
-          <p className="text-sm text-destructive">Failed to load extraction runs.</p>
+          <p className="text-sm text-destructive">Failed to load daily job runs.</p>
           <p className="text-xs text-muted-foreground mt-1">{(error as Error).message}</p>
         </div>
       ) : runs.length === 0 ? (
         <div className="text-center py-12 border border-dashed border-border rounded-lg">
           <Play className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
-          <p className="text-muted-foreground">No extraction runs yet</p>
+          <p className="text-muted-foreground">No daily job runs yet</p>
         </div>
       ) : (
         <div className="border border-border rounded-lg overflow-hidden">
@@ -97,9 +92,9 @@ export default function RunsPage() {
             <thead className="bg-muted/50">
               <tr>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground">Status</th>
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Endpoint</th>
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Type</th>
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground">By</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Job</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Trigger</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Requested By</th>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground">API Calls</th>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground">Pages</th>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground">Errors</th>

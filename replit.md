@@ -6,7 +6,15 @@ Operational console for the NICE/InContact extraction pipeline — pulls Contact
 
 ## App branding
 
-UI brand is "InContact Extractor". Sidebar is grouped into Overview / Extraction (Contacts, Agents, Recordings) / Operations (Monitor, Live Monitor → /realtime artifact, Audit Log) / Tools (API Explorer, Scripts). The dormant generic-extraction pages (Source Systems, Endpoints, Runs) still have routes registered in `App.tsx` but are intentionally absent from the sidebar.
+UI brand is "InContact Extractor". Sidebar is grouped into Overview / Extraction (Contacts, Agents, Recordings) / Operations (Monitor, Live Monitor → /realtime artifact, Daily Job Runs, Audit Log) / Tools (API Explorer, Scripts).
+
+## Tier 2 cleanup status
+
+Frontend pages deleted: `source-systems.tsx`, `endpoints.tsx`, `run-new.tsx`, `staging.tsx`, `realtime.tsx` (control-plane copy — replaced by the realtime artifact). Their routes are removed from `App.tsx`.
+
+KEPT and reframed: `runs.tsx` and `run-detail.tsx` are NOT dormant — the InContact daily jobs (Agents at 6 AM, Contacts pipeline at 6:30 AM) actively write to the `extraction_run` / `source_system` / `endpoint_definition` tables to track their state. The Runs page is now sidebar-surfaced as **Daily Job Runs** under Operations and is the only UI for "did today's NICE jobs land?". The dashboard's "Recent Daily Job Runs" panel drills into `/runs/:id`.
+
+**Tier 3 implication**: Deleting `extraction_run` / `source_system` / `endpoint_definition` tables and `lib/execution-engine` requires first rewriting the InContact daily jobs' state tracking (e.g. with a dedicated `incontact_job_run` table). Don't drop those tables until that refactor is done.
 
 ## Stack
 

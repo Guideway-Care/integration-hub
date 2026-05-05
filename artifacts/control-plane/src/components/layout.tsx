@@ -12,6 +12,7 @@ import {
   FileAudio,
   Headphones,
   ExternalLink,
+  Play,
 } from "lucide-react";
 import { useState } from "react";
 import type { LucideIcon } from "lucide-react";
@@ -48,6 +49,7 @@ const navSections: NavSection[] = [
     items: [
       { label: "Monitor", href: "/monitor", icon: BarChart3 },
       { label: "Live Monitor", href: "/realtime", icon: Activity, external: true },
+      { label: "Daily Job Runs", href: "/runs", icon: Play },
       { label: "Audit Log", href: "/audit", icon: ClipboardList },
     ],
   },

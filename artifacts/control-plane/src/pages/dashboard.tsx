@@ -3,14 +3,10 @@ import { api } from "@/lib/api";
 import { Link } from "wouter";
 import {
   LayoutDashboard,
-  Server,
-  Plug,
   Play,
   Phone,
-  Database,
   FileAudio,
   AlertTriangle,
-  CheckCircle2,
   Clock,
   ArrowRight,
   RefreshCw,
@@ -179,32 +175,33 @@ export default function DashboardPage() {
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <StatCard
-          label="Source Systems"
-          value={d.sourceSystems.total}
-          icon={Server}
-          href="/source-systems"
-          sub={`${d.sourceSystems.active} active`}
+          label="Call Recordings"
+          value={d.incontact.recordingsCount}
+          icon={FileAudio}
+          href="/recordings"
+          color="text-indigo-500"
         />
         <StatCard
-          label="Endpoints"
-          value={d.endpoints.total}
-          icon={Plug}
-          href="/endpoints"
-          sub={`${d.endpoints.active} active`}
+          label="Staged Calls"
+          value={d.incontact.staging.total}
+          icon={Phone}
+          href="/incontact"
+          color="text-blue-500"
+          sub={`${d.incontact.staging.pending} pending`}
         />
         <StatCard
-          label="Total Runs"
+          label="Daily Job Runs"
           value={d.runs.total}
           icon={Play}
           href="/runs"
           sub={`${d.runs.thisWeek} this week`}
         />
         <StatCard
-          label="Call Recordings"
-          value={d.incontact.recordingsCount}
-          icon={FileAudio}
-          href="/recordings"
-          color="text-indigo-500"
+          label="Failed Downloads"
+          value={d.incontact.staging.failed}
+          icon={AlertTriangle}
+          href="/incontact"
+          color={d.incontact.staging.failed > 0 ? "text-red-500" : "text-muted-foreground"}
         />
       </div>
 
@@ -212,7 +209,7 @@ export default function DashboardPage() {
         <div className="border border-border rounded-lg p-4 bg-card">
           <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
             <TrendingUp className="w-4 h-4 text-primary" />
-            Extraction Pipeline
+            Daily Job Status
           </h3>
           <div className="grid grid-cols-4 gap-3 text-center">
             <div>
@@ -271,7 +268,7 @@ export default function DashboardPage() {
           <div className="px-4 py-3 border-b border-border flex items-center justify-between">
             <h3 className="text-sm font-semibold flex items-center gap-2">
               <Clock className="w-4 h-4 text-muted-foreground" />
-              Recent Extraction Runs
+              Recent Daily Job Runs
             </h3>
             <Link href="/runs">
               <span className="text-xs text-primary hover:underline cursor-pointer">View all</span>
