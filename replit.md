@@ -88,7 +88,7 @@ Express 5 API server. All routes mount at `/api`.
   - `scheduler.ts` — Cloud Scheduler sync
   - `monitor.ts` — BigQuery contact daily counts for heatmap
   - `incontact.ts` — InContact API proxy (auth test, fetch, endpoints list); scheduled daily jobs for Agents (`6:00 AM` Chicago) and Contacts pipeline (`6:30 AM` Chicago, chains Extract→Transform→Queue→Download, awaits both loader & processor completion, uses Chicago-local day boundaries)
-  - `bq.ts` — BigQuery staging queue management (summary, add, reset, recordings, queue-recordings, download pipeline orchestration with loader→processor sequencing); ad-hoc recording pull (`/bq/queue-recordings/preview`, `/bq/queue-recordings/adhoc`); distinct campaigns/dispositions; `loadActiveDailyRules()` falls back to `DEFAULT_DAILY_RULES` (URH/Dignity, "Reached Patient%")
+  - `bq.ts` — BigQuery staging queue management (summary, add, reset, recordings, queue-recordings, download pipeline orchestration with loader→processor sequencing, both jobs awaited); ad-hoc recording pull (`/bq/queue-recordings/preview`, `/bq/queue-recordings/adhoc`) plus one-click ad-hoc download (`POST /bq/queue-recordings/adhoc/run` + `GET /bq/adhoc-download-job-status`) which runs loader (with `CALL_LIST_PATH` env override pointing at the adhoc batch file) then processor; daily and ad-hoc downloads are mutually exclusive via in-process locks; distinct campaigns/dispositions; `loadActiveDailyRules()` falls back to `DEFAULT_DAILY_RULES` (URH/Dignity, "Reached Patient%")
   - `recording-filter-rules.ts` — CRUD for `recording_filter_rule` table (audit-logged); the daily Queue step reads active rows here
 - Depends on: `@workspace/db`, `@workspace/api-zod`
 - `pnpm --filter @workspace/api-server run dev` — dev server

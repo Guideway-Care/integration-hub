@@ -324,8 +324,9 @@ async function getAccessToken(): Promise<string> {
   return data.access_token;
 }
 
-export async function triggerLoaderJob() {
-  return triggerInContactCloudRunJob("incontact-call-loader");
+export async function triggerLoaderJob(callListPath?: string) {
+  const env = callListPath ? { CALL_LIST_PATH: callListPath } : undefined;
+  return triggerInContactCloudRunJob("incontact-call-loader", env);
 }
 
 export async function triggerProcessorJob() {
@@ -336,9 +337,25 @@ export async function awaitExecution(executionName: string, timeoutMs?: number) 
   return waitForExecution(executionName, timeoutMs);
 }
 
-async function triggerInContactCloudRunJob(jobName: string) {
+async function triggerInContactCloudRunJob(
+  jobName: string,
+  envOverrides?: Record<string, string>,
+) {
   const projectId = getGcpProjectId();
   const token = await getAccessToken();
+
+  const body =
+    envOverrides && Object.keys(envOverrides).length > 0
+      ? {
+          overrides: {
+            containerOverrides: [
+              {
+                env: Object.entries(envOverrides).map(([name, value]) => ({ name, value })),
+              },
+            ],
+          },
+        }
+      : undefined;
 
   const runRes = await fetch(
     `https://run.googleapis.com/v2/projects/${projectId}/locations/us-central1/jobs/${jobName}:run`,
@@ -348,6 +365,7 @@ async function triggerInContactCloudRunJob(jobName: string) {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
       },
+      body: body ? JSON.stringify(body) : undefined,
     }
   );
 
@@ -948,6 +966,10 @@ router.post("/bq/run-job", async (_req, res) => {
     res.status(409).json({ error: "Download pipeline is already running", step: downloadJob.step });
     return;
   }
+  if (adhocDownloadJob.status === "running") {
+    res.status(409).json({ error: "Ad-hoc download is currently running — wait for it to finish", step: adhocDownloadJob.step });
+    return;
+  }
 
   downloadJob = { status: "running", step: "starting-loader", startedAt: new Date().toISOString() };
 
@@ -973,6 +995,13 @@ router.post("/bq/run-job", async (_req, res) => {
       const processorResult = await triggerInContactCloudRunJob("incontact-call-processor");
       downloadJob.processorExecution = processorResult.executionName;
       console.log("[run-job] Processor triggered:", processorResult.executionName);
+
+      console.log("[run-job] Waiting for processor to complete...");
+      const processorStatus = await waitForExecution(processorResult.executionName);
+      if (!processorStatus.succeeded) {
+        throw new Error(`Processor failed: ${processorStatus.error || "unknown error"}`);
+      }
+      console.log("[run-job] Processor completed successfully");
 
       downloadJob.status = "completed";
       downloadJob.step = "done";
@@ -1061,6 +1090,120 @@ router.post("/bq/queue-recordings/adhoc", async (req, res) => {
       return;
     }
     console.error("[bq/queue-recordings/adhoc]", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+let adhocDownloadJob: {
+  status: "idle" | "running" | "completed" | "failed";
+  step: string;
+  batchId?: string;
+  gcsPath?: string;
+  startedAt?: string;
+  completedAt?: string;
+  loaderExecution?: string;
+  processorExecution?: string;
+  error?: string;
+} = { status: "idle", step: "" };
+
+router.get("/bq/adhoc-download-job-status", (_req, res) => {
+  res.json(adhocDownloadJob);
+});
+
+const AdhocRunSchema = z.object({
+  batchId: z.string().regex(/^adhoc_[A-Za-z0-9_\-:.]+$/, "Invalid batchId"),
+});
+
+router.post("/bq/queue-recordings/adhoc/run", async (req, res) => {
+  let lockAcquired = false;
+  try {
+    const { batchId } = AdhocRunSchema.parse(req.body);
+    const callListPath = `call_list/${batchId}.txt`;
+    const { bucket } = getBqTables();
+
+    // Acquire lock synchronously (no awaits between check and set) to close race window.
+    if (adhocDownloadJob.status === "running") {
+      res.status(409).json({ error: "Ad-hoc download is already running", step: adhocDownloadJob.step });
+      return;
+    }
+    if (downloadJob.status === "running") {
+      res.status(409).json({ error: "Daily download pipeline is currently running — wait for it to finish", step: downloadJob.step });
+      return;
+    }
+    adhocDownloadJob = {
+      status: "running",
+      step: "verifying-file",
+      batchId,
+      gcsPath: `gs://${bucket}/${callListPath}`,
+      startedAt: new Date().toISOString(),
+    };
+    lockAcquired = true;
+
+    // Verify the file exists before kicking off Cloud Run jobs.
+    const gcsClient = getGCSClient();
+    const [exists] = await gcsClient.bucket(bucket).file(callListPath).exists();
+    if (!exists) {
+      adhocDownloadJob = {
+        status: "failed",
+        step: "verifying-file",
+        batchId,
+        gcsPath: `gs://${bucket}/${callListPath}`,
+        startedAt: adhocDownloadJob.startedAt,
+        completedAt: new Date().toISOString(),
+        error: "Batch file not found in GCS",
+      };
+      res.status(404).json({ error: `Batch file not found: gs://${bucket}/${callListPath}` });
+      return;
+    }
+
+    adhocDownloadJob.step = "starting-loader";
+    res.json({ message: "Ad-hoc download started", batchId, status: "running" });
+
+    (async () => {
+      try {
+        adhocDownloadJob.step = "loader-running";
+        console.log(`[adhoc-run] Loader for ${callListPath}`);
+        const loaderResult = await triggerLoaderJob(callListPath);
+        adhocDownloadJob.loaderExecution = loaderResult.executionName;
+        const loaderStatus = await waitForExecution(loaderResult.executionName);
+        if (!loaderStatus.succeeded) {
+          throw new Error(`Loader failed: ${loaderStatus.error || "unknown error"}`);
+        }
+
+        adhocDownloadJob.step = "processor-running";
+        console.log("[adhoc-run] Processor starting");
+        const processorResult = await triggerInContactCloudRunJob("incontact-call-processor");
+        adhocDownloadJob.processorExecution = processorResult.executionName;
+        const processorStatus = await waitForExecution(processorResult.executionName);
+        if (!processorStatus.succeeded) {
+          throw new Error(`Processor failed: ${processorStatus.error || "unknown error"}`);
+        }
+
+        adhocDownloadJob.status = "completed";
+        adhocDownloadJob.step = "done";
+        adhocDownloadJob.completedAt = new Date().toISOString();
+        console.log("[adhoc-run] Completed");
+      } catch (err: any) {
+        adhocDownloadJob.status = "failed";
+        adhocDownloadJob.error = err.message;
+        adhocDownloadJob.completedAt = new Date().toISOString();
+        console.error("[adhoc-run] Failed:", err.message);
+      }
+    })();
+  } catch (err: any) {
+    if (lockAcquired) {
+      adhocDownloadJob = {
+        ...adhocDownloadJob,
+        status: "failed",
+        error: err?.message || "Unknown error",
+        completedAt: new Date().toISOString(),
+      };
+    }
+    if (err?.issues) {
+      res.status(400).json({ error: "Invalid request", details: err.issues });
+      return;
+    }
+    console.error("[bq/queue-recordings/adhoc/run]", err.message);
     res.status(500).json({ error: err.message });
   }
 });

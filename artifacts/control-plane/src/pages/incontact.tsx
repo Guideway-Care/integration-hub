@@ -791,6 +791,43 @@ function AdHocPullPanel() {
       toast({ title: "Queue failed", description: err?.message || "Unknown error", variant: "destructive" }),
   });
 
+  type AdhocJobStatus = {
+    status: "idle" | "running" | "completed" | "failed";
+    step: string;
+    batchId?: string;
+    gcsPath?: string;
+    startedAt?: string;
+    completedAt?: string;
+    loaderExecution?: string;
+    processorExecution?: string;
+    error?: string;
+  };
+
+  const { data: adhocJob } = useQuery<AdhocJobStatus>({
+    queryKey: ["adhoc-download-job-status"],
+    queryFn: () => api.get<AdhocJobStatus>("/bq/adhoc-download-job-status"),
+    refetchInterval: 3000,
+  });
+
+  const downloadAdhocMutation = useMutation({
+    mutationFn: (batchId: string) =>
+      api.post<{ message: string; batchId: string; status: string }>(
+        "/bq/queue-recordings/adhoc/run",
+        { batchId },
+      ),
+    onSuccess: (res) =>
+      toast({
+        title: "Download started",
+        description: `Loader + processor running for ${res.batchId}`,
+      }),
+    onError: (err: any) =>
+      toast({
+        title: "Download failed to start",
+        description: err?.message || "Unknown error",
+        variant: "destructive",
+      }),
+  });
+
   return (
     <div className="rounded-lg border border-border bg-card p-4 space-y-3">
       <div>
@@ -878,13 +915,67 @@ function AdHocPullPanel() {
           <span className="text-xs text-red-600">Preview failed: {(previewMutation.error as Error).message}</span>
         )}
       </div>
-      {adhocMutation.isSuccess && adhocMutation.data.queued > 0 && (
-        <div className="text-xs text-green-700 bg-green-50 border border-green-200 rounded px-2 py-1">
-          Queued <span className="font-medium">{adhocMutation.data.queued.toLocaleString()}</span> contact IDs as <code className="bg-white px-1 rounded">{adhocMutation.data.batchId}.txt</code>.
-          <span className="block text-muted-foreground mt-0.5">{adhocMutation.data.gcsPath}</span>
-          <span className="block text-muted-foreground mt-0.5">
-            Note: the daily Download step processes <code className="bg-white px-1 rounded">call_list/call_list.txt</code>. To download this batch now, copy/rename it to <code className="bg-white px-1 rounded">call_list.txt</code> in GCS, then click <span className="font-medium">Run</span> on Step 4.
-          </span>
+      {adhocMutation.isSuccess && adhocMutation.data.queued > 0 && adhocMutation.data.batchId && (
+        <div className="text-xs text-green-700 bg-green-50 border border-green-200 rounded px-2 py-2 space-y-1.5">
+          <div>
+            Queued <span className="font-medium">{adhocMutation.data.queued.toLocaleString()}</span> contact IDs as{" "}
+            <code className="bg-white px-1 rounded">{adhocMutation.data.batchId}.txt</code>.
+          </div>
+          <div className="text-muted-foreground">{adhocMutation.data.gcsPath}</div>
+          <div className="flex items-center gap-2 pt-1">
+            <button
+              onClick={() => {
+                const bid = adhocMutation.data.batchId!;
+                if (
+                  confirm(
+                    `Run loader + processor now for ${bid}? This will load these contact IDs into the staging queue and download their recordings.`,
+                  )
+                ) {
+                  downloadAdhocMutation.mutate(bid);
+                }
+              }}
+              disabled={
+                downloadAdhocMutation.isPending ||
+                adhocJob?.status === "running"
+              }
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded-md text-xs font-medium hover:bg-green-700 disabled:opacity-50"
+            >
+              {downloadAdhocMutation.isPending ? (
+                <Loader2 className="w-3 h-3 animate-spin" />
+              ) : (
+                <Play className="w-3 h-3" />
+              )}
+              Download this batch now
+            </button>
+            <span className="text-[11px] text-muted-foreground">
+              Runs loader (with this file) → processor. Won't touch the daily call list.
+            </span>
+          </div>
+        </div>
+      )}
+      {adhocJob && adhocJob.status !== "idle" && (
+        <div
+          className={`text-xs rounded border px-2 py-2 ${
+            adhocJob.status === "running"
+              ? "bg-blue-50 border-blue-200 text-blue-700"
+              : adhocJob.status === "completed"
+              ? "bg-green-50 border-green-200 text-green-700"
+              : "bg-red-50 border-red-200 text-red-700"
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            {adhocJob.status === "running" && <Loader2 className="w-3 h-3 animate-spin" />}
+            <span className="font-medium">Ad-hoc download {adhocJob.status}</span>
+            {adhocJob.batchId && <code className="bg-white px-1 rounded">{adhocJob.batchId}</code>}
+            <span className="text-muted-foreground">step: {adhocJob.step || "—"}</span>
+          </div>
+          {adhocJob.error && <div className="mt-1">Error: {adhocJob.error}</div>}
+          {adhocJob.startedAt && (
+            <div className="text-muted-foreground mt-0.5">
+              Started {new Date(adhocJob.startedAt).toLocaleString()}
+              {adhocJob.completedAt && <> · Finished {new Date(adhocJob.completedAt).toLocaleString()}</>}
+            </div>
+          )}
         </div>
       )}
     </div>

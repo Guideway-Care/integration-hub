@@ -5,7 +5,7 @@ const PROJECT_ID = process.env.GCP_PROJECT_ID || "guidewaycare-476802";
 const DATASET = "incontact";
 const BUCKET_NAME = "incontact-audio";
 const STAGING_TABLE = `${PROJECT_ID}.${DATASET}.staging_call_queue`;
-const CALL_LIST_PATH = "call_list/call_list.txt";
+const CALL_LIST_PATH = process.env.CALL_LIST_PATH || "call_list/call_list.txt";
 
 const bigquery = new BigQuery({ projectId: PROJECT_ID });
 const gcsStorage = new Storage({ projectId: PROJECT_ID });
@@ -92,7 +92,8 @@ async function insertCallIds(callIds) {
 async function archiveCallList() {
   const file = bucket.file(CALL_LIST_PATH);
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-  const archivePath = `call_list/archive/call_list_${timestamp}.txt`;
+  const baseName = CALL_LIST_PATH.split("/").pop().replace(/\.txt$/, "");
+  const archivePath = `call_list/archive/${baseName}_${timestamp}.txt`;
 
   await file.copy(bucket.file(archivePath));
   await file.delete();
