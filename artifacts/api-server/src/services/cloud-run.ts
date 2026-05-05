@@ -120,6 +120,63 @@ export async function syncSchedulerJob(spec: SchedulerJobSpec): Promise<{
   }
 }
 
+export interface SimpleSchedulerJobSpec {
+  jobName: string;
+  schedule: string;
+  timeZone: string;
+  path: string;
+  body?: Record<string, unknown>;
+}
+
+export async function syncSimpleSchedulerJob(spec: SimpleSchedulerJobSpec): Promise<{
+  schedulerJobName: string;
+  action: "created" | "updated" | "skipped-dev";
+}> {
+  const { projectId, region } = getGcpConfig();
+  const apiServerUrl = process.env.API_SERVER_URL || `https://api-server-${projectId}.${region}.run.app`;
+  const triggerUrl = `${apiServerUrl}${spec.path}`;
+
+  if (process.env.NODE_ENV === "development") {
+    console.log(`[Cloud Scheduler] (dev) Would sync job: ${spec.jobName} schedule="${spec.schedule}" tz=${spec.timeZone} → ${triggerUrl}`);
+    return { schedulerJobName: spec.jobName, action: "skipped-dev" };
+  }
+
+  const { CloudSchedulerClient } = await import("@google-cloud/scheduler" as string).catch(() => {
+    throw new Error("@google-cloud/scheduler not available. Install it for GCP deployments.");
+  });
+
+  const client = new CloudSchedulerClient();
+  const parent = `projects/${projectId}/locations/${region}`;
+  const jobPath = `${parent}/jobs/${spec.jobName}`;
+
+  const jobBody = {
+    name: jobPath,
+    schedule: spec.schedule,
+    timeZone: spec.timeZone,
+    httpTarget: {
+      uri: triggerUrl,
+      httpMethod: "POST" as const,
+      body: Buffer.from(JSON.stringify(spec.body ?? {})).toString("base64"),
+      headers: { "Content-Type": "application/json" },
+      oidcToken: {
+        serviceAccountEmail: process.env.SCHEDULER_SERVICE_ACCOUNT || `scheduler-sa@${projectId}.iam.gserviceaccount.com`,
+      },
+    },
+  };
+
+  try {
+    await client.getJob({ name: jobPath });
+    await client.updateJob({ job: jobBody });
+    return { schedulerJobName: spec.jobName, action: "updated" };
+  } catch (err: any) {
+    if (err.code === 5) {
+      await client.createJob({ parent, job: jobBody });
+      return { schedulerJobName: spec.jobName, action: "created" };
+    }
+    throw err;
+  }
+}
+
 export async function syncAllSchedules(): Promise<Array<{
   endpointId: string;
   schedulerJobName: string;

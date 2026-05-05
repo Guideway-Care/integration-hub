@@ -400,6 +400,88 @@ function ContactCalendar({ rows }: { rows: DailyCount[] }) {
   );
 }
 
+interface ScheduledAgentsJobStatus {
+  status: "idle" | "running" | "completed" | "failed";
+  phase: "extract" | "transform" | "done" | "";
+  date?: string;
+  startedAt?: string;
+  completedAt?: string;
+  durationMs?: number;
+  error?: string;
+  trigger?: "manual" | "scheduled";
+}
+
+function ScheduledAgentsJobPanel() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const { data } = useQuery({
+    queryKey: ["agents-daily-job-status"],
+    queryFn: () => api.get<{ data: ScheduledAgentsJobStatus; yesterdayChicago: string }>("/incontact/agents-daily-job/status"),
+    refetchInterval: (q) => (q.state.data?.data?.status === "running" ? 3000 : 30000),
+  });
+  const mutation = useMutation({
+    mutationFn: () => api.post<{ message: string; date: string }>("/incontact/agents-daily-job", {}),
+    onSuccess: (res) => {
+      toast({ title: "Started", description: `Daily job started for ${res.date}` });
+      queryClient.invalidateQueries({ queryKey: ["agents-daily-job-status"] });
+    },
+    onError: (err: any) => toast({ title: "Failed to start", description: err?.message || "Unknown error", variant: "destructive" }),
+  });
+
+  const job = data?.data;
+  const yesterday = data?.yesterdayChicago;
+  const statusBadge =
+    job?.status === "completed" ? "bg-green-100 text-green-700"
+    : job?.status === "failed" ? "bg-red-100 text-red-700"
+    : job?.status === "running" ? "bg-blue-100 text-blue-700"
+    : "bg-gray-100 text-gray-700";
+
+  return (
+    <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold flex items-center gap-2">
+            <Clock className="w-4 h-4 text-muted-foreground" />
+            Scheduled Daily Run
+          </h3>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Runs every morning at <span className="font-medium">6:00 AM America/Chicago</span> for the previous day. Extracts agent performance, then transforms into <code className="text-[11px] bg-muted px-1 rounded">incontact.agent_activity</code>.
+          </p>
+        </div>
+        <button
+          onClick={() => mutation.mutate()}
+          disabled={mutation.isPending || job?.status === "running"}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-border rounded-md text-xs font-medium hover:bg-muted disabled:opacity-50 whitespace-nowrap"
+        >
+          {(mutation.isPending || job?.status === "running") ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+          Run for yesterday now
+        </button>
+      </div>
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-medium ${statusBadge}`}>
+          {job?.status === "completed" ? <CheckCircle2 className="w-3 h-3" /> :
+           job?.status === "failed" ? <XCircle className="w-3 h-3" /> :
+           job?.status === "running" ? <Loader2 className="w-3 h-3 animate-spin" /> :
+           <Clock className="w-3 h-3" />}
+          {job?.status ?? "idle"}
+          {job?.status === "running" && job.phase ? ` · ${job.phase}` : ""}
+        </span>
+        {job?.date && <span className="text-muted-foreground">date: <span className="font-medium text-foreground">{job.date}</span></span>}
+        {job?.trigger && <span className="text-muted-foreground">trigger: <span className="font-medium text-foreground">{job.trigger}</span></span>}
+        {yesterday && <span className="text-muted-foreground">next-up target: <span className="font-medium text-foreground">{yesterday}</span></span>}
+        {job?.startedAt && <span className="text-muted-foreground">started: <span className="font-medium text-foreground">{new Date(job.startedAt).toLocaleString()}</span></span>}
+        {job?.completedAt && <span className="text-muted-foreground">finished: <span className="font-medium text-foreground">{new Date(job.completedAt).toLocaleString()}</span></span>}
+        {typeof job?.durationMs === "number" && <span className="text-muted-foreground">duration: <span className="font-medium text-foreground">{Math.round(job.durationMs / 1000)}s</span></span>}
+      </div>
+      {job?.error && (
+        <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">
+          Error: {job.error}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function InContactPage() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -1315,6 +1397,7 @@ export default function InContactPage() {
 
           {agentSubTab === "extract" && (
             <div className="space-y-4">
+              <ScheduledAgentsJobPanel />
               <PipelineStep
                 number={1}
                 title="Retrieve Agent Performance"

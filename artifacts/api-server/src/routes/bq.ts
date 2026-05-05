@@ -559,6 +559,17 @@ let agentsTransformJob: {
   error?: string;
 } = { status: "idle", step: "" };
 
+export function getAgentsTransformJob() {
+  return agentsTransformJob;
+}
+
+export function startAgentsTransformPipeline() {
+  if (agentsTransformJob.status === "running") return false;
+  agentsTransformJob = { status: "running", step: "Starting...", startedAt: new Date().toISOString() };
+  runAgentsTransformPipeline();
+  return true;
+}
+
 async function runAgentsTransformPipeline() {
   const projectId = getGcpProjectId();
   const bqRegional = getBigQueryClient("us-central1");

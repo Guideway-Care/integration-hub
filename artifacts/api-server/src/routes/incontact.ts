@@ -678,6 +678,151 @@ async function runAgentsDailyExtraction(startDate: string, endDate: string) {
   console.log(`[agents-daily] All days done. Success: ${allSuccess}`);
 }
 
+function getYesterdayInChicago(): string {
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Chicago",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const todayChicago = fmt.format(new Date());
+  const [y, m, d] = todayChicago.split("-").map(Number);
+  const u = new Date(Date.UTC(y, m - 1, d));
+  u.setUTCDate(u.getUTCDate() - 1);
+  const yy = u.getUTCFullYear();
+  const mm = String(u.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(u.getUTCDate()).padStart(2, "0");
+  return `${yy}-${mm}-${dd}`;
+}
+
+async function verifyGoogleOidcToken(req: any): Promise<{ ok: true; email: string } | { ok: false; reason: string }> {
+  const auth = req.headers.authorization;
+  if (typeof auth !== "string" || !auth.startsWith("Bearer ")) {
+    return { ok: false, reason: "Missing Bearer token" };
+  }
+  const token = auth.substring("Bearer ".length).trim();
+  try {
+    const { OAuth2Client } = await import("google-auth-library" as string);
+    const client = new OAuth2Client();
+    const projectId = process.env.GCP_PROJECT_ID || "guidewaycare-476802";
+    const region = process.env.GCP_REGION || "us-central1";
+    const expectedAudience =
+      (process.env.API_SERVER_URL || `https://api-server-${projectId}.${region}.run.app`) +
+      "/api/incontact/agents-daily-job";
+    const expectedSa =
+      process.env.SCHEDULER_SERVICE_ACCOUNT || `scheduler-sa@${projectId}.iam.gserviceaccount.com`;
+    const ticket = await client.verifyIdToken({ idToken: token, audience: expectedAudience });
+    const payload = ticket.getPayload();
+    if (!payload?.email || payload.email !== expectedSa) {
+      return { ok: false, reason: `Wrong service account: ${payload?.email}` };
+    }
+    return { ok: true, email: payload.email };
+  } catch (err: any) {
+    return { ok: false, reason: err.message };
+  }
+}
+
+let agentsScheduledJob: {
+  status: "idle" | "running" | "completed" | "failed";
+  phase: "extract" | "transform" | "done" | "";
+  date?: string;
+  startedAt?: string;
+  completedAt?: string;
+  durationMs?: number;
+  error?: string;
+  trigger?: "manual" | "scheduled";
+} = { status: "idle", phase: "" };
+
+export function getAgentsScheduledJob() {
+  return agentsScheduledJob;
+}
+
+async function runAgentsScheduledJob(date: string, trigger: "manual" | "scheduled") {
+  const startTs = Date.now();
+  agentsScheduledJob = {
+    status: "running",
+    phase: "extract",
+    date,
+    startedAt: new Date().toISOString(),
+    trigger,
+  };
+  try {
+    await runAgentsDailyExtraction(date, date);
+    if (agentsDailyJob.status !== "completed") {
+      const failed = agentsDailyJob.results.filter((r) => r.status !== "COMPLETED");
+      throw new Error(
+        `Extraction did not complete cleanly: ${failed.map((r) => `${r.date}=${r.status}`).join(", ")}`,
+      );
+    }
+
+    agentsScheduledJob.phase = "transform";
+    const { startAgentsTransformPipeline, getAgentsTransformJob } = await import("./bq");
+    if (!startAgentsTransformPipeline()) {
+      throw new Error("Transform was already running");
+    }
+    while (getAgentsTransformJob().status === "running") {
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+    const transform = getAgentsTransformJob();
+    if (transform.status !== "completed") {
+      throw new Error(`Transform failed: ${transform.error || "unknown error"}`);
+    }
+
+    agentsScheduledJob = {
+      ...agentsScheduledJob,
+      status: "completed",
+      phase: "done",
+      completedAt: new Date().toISOString(),
+      durationMs: Date.now() - startTs,
+    };
+    console.log(`[agents-scheduled] Completed for ${date} in ${Math.round((Date.now() - startTs) / 1000)}s`);
+  } catch (err: any) {
+    agentsScheduledJob = {
+      ...agentsScheduledJob,
+      status: "failed",
+      error: err.message,
+      completedAt: new Date().toISOString(),
+      durationMs: Date.now() - startTs,
+    };
+    console.error(`[agents-scheduled] Failed for ${date}:`, err.message);
+  }
+}
+
+router.post("/incontact/agents-daily-job", async (req, res) => {
+  try {
+    const claimedTrigger: "manual" | "scheduled" = req.body?.trigger === "scheduled" ? "scheduled" : "manual";
+    if (claimedTrigger === "scheduled" && process.env.NODE_ENV !== "development") {
+      const verdict = await verifyGoogleOidcToken(req);
+      if (!verdict.ok) {
+        res.status(401).json({ error: "Unauthorized scheduler call", reason: verdict.reason });
+        return;
+      }
+    }
+    if (agentsScheduledJob.status === "running") {
+      res.status(409).json({
+        error: "Agents daily job already running",
+        phase: agentsScheduledJob.phase,
+        date: agentsScheduledJob.date,
+      });
+      return;
+    }
+
+    const date: string = (req.body?.date as string) || getYesterdayInChicago();
+    runAgentsScheduledJob(date, claimedTrigger);
+    res.json({ message: "Agents daily job started", date, trigger: claimedTrigger });
+  } catch (err: any) {
+    console.error("[incontact/agents-daily-job]", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get("/incontact/agents-daily-job/status", async (_req, res) => {
+  res.json({
+    data: agentsScheduledJob,
+    yesterdayChicago: getYesterdayInChicago(),
+  });
+});
+
 router.post("/incontact/extract-agents-daily", async (req, res) => {
   try {
     const { startDate, endDate } = req.body;

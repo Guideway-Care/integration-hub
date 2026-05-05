@@ -4,6 +4,22 @@ import pinoHttp from "pino-http";
 import router from "./routes";
 import { logger } from "./lib/logger";
 import { errorHandler } from "./middlewares/error-handler";
+import { syncSimpleSchedulerJob } from "./services/cloud-run";
+
+void (async () => {
+  try {
+    const result = await syncSimpleSchedulerJob({
+      jobName: "incontact-agents-daily",
+      schedule: "0 6 * * *",
+      timeZone: "America/Chicago",
+      path: "/api/incontact/agents-daily-job",
+      body: { trigger: "scheduled" },
+    });
+    logger.info({ result }, "[startup] Synced incontact-agents-daily Cloud Scheduler job");
+  } catch (err: any) {
+    logger.warn({ err: err.message }, "[startup] Failed to sync incontact-agents-daily job (non-fatal)");
+  }
+})();
 
 const app: Express = express();
 
