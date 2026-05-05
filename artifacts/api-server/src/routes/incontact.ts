@@ -806,6 +806,7 @@ router.post("/incontact/agents-daily-job", async (req, res) => {
     if (claimedTrigger === "scheduled" && process.env.NODE_ENV !== "development") {
       const verdict = await verifyGoogleOidcToken(req);
       if (!verdict.ok) {
+        console.warn(`[agents-daily-job] OIDC rejected: ${verdict.reason}`);
         res.status(401).json({ error: "Unauthorized scheduler call", reason: verdict.reason });
         return;
       }
