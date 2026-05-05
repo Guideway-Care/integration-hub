@@ -705,14 +705,26 @@ async function verifyGoogleOidcToken(req: any): Promise<{ ok: true; email: strin
     const { OAuth2Client } = await import("google-auth-library" as string);
     const client = new OAuth2Client();
     const projectId = process.env.GCP_PROJECT_ID || "guidewaycare-476802";
-    const region = process.env.GCP_REGION || "us-central1";
-    const expectedAudience =
-      (process.env.API_SERVER_URL || `https://api-server-${projectId}.${region}.run.app`) +
-      "/api/incontact/agents-daily-job";
     const expectedSa =
       process.env.SCHEDULER_SERVICE_ACCOUNT || `scheduler-sa@${projectId}.iam.gserviceaccount.com`;
-    const ticket = await client.verifyIdToken({ idToken: token, audience: expectedAudience });
+    // Derive accepted audiences from the actual incoming request so that any
+    // valid Cloud Run alias (hash-based, project-number-based, project-id-based,
+    // or a custom domain) works without env config.
+    const host = req.get?.("host") || req.headers?.host;
+    const proto = (req.headers?.["x-forwarded-proto"] as string) || req.protocol || "https";
+    const reqUrl = host ? `${proto}://${host}${req.originalUrl || req.url || ""}` : undefined;
+    const acceptedAudiences = [
+      reqUrl,
+      host ? `${proto}://${host}` : undefined,
+      process.env.API_SERVER_URL ? `${process.env.API_SERVER_URL}/api/incontact/agents-daily-job` : undefined,
+      process.env.API_SERVER_URL,
+    ].filter((v): v is string => typeof v === "string" && v.length > 0);
+    // verifyIdToken validates signature/issuer/expiry; we then check audience + email ourselves.
+    const ticket = await client.verifyIdToken({ idToken: token });
     const payload = ticket.getPayload();
+    if (!payload?.aud || !acceptedAudiences.includes(String(payload.aud))) {
+      return { ok: false, reason: `Audience mismatch: token=${payload?.aud} accepted=${acceptedAudiences.join("|")}` };
+    }
     if (!payload?.email || payload.email !== expectedSa) {
       return { ok: false, reason: `Wrong service account: ${payload?.email}` };
     }
