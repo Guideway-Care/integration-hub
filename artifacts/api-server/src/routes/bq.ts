@@ -1035,8 +1035,23 @@ router.post("/bq/queue-recordings", async (_req, res) => {
 
     res.json({ queued: written.count, rulesUsed: rules.length, usedFallback });
   } catch (err: any) {
-    console.error("[bq/queue-recordings]", err.message);
-    res.status(500).json({ error: err.message });
+    const cause = err?.cause ?? err?.original ?? null;
+    const causeMsg = cause?.message ?? null;
+    const causeCode = cause?.code ?? null;
+    const causeDetail = cause?.detail ?? null;
+    console.error("[bq/queue-recordings]", {
+      message: err.message,
+      causeMsg,
+      causeCode,
+      causeDetail,
+      stack: err.stack,
+    });
+    res.status(500).json({
+      error: err.message,
+      cause: causeMsg,
+      code: causeCode,
+      detail: causeDetail,
+    });
   }
 });
 
