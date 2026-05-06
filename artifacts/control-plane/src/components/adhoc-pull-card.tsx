@@ -15,7 +15,14 @@ import {
   Download,
 } from "lucide-react";
 
-type PreviewResp = { count: number; sample: string[] };
+type PreviewDiagnostics = {
+  totalMatchingAnyDate: number;
+  totalMatchingInRange: number;
+  alreadyDownloaded: number;
+  minDate: string | null;
+  maxDate: string | null;
+};
+type PreviewResp = { count: number; sample: string[]; diagnostics?: PreviewDiagnostics };
 type AdhocResp = { queued: number; batchId?: string; gcsPath?: string; message?: string };
 type AdhocStatus = {
   status: "idle" | "running" | "completed" | "failed";
@@ -369,6 +376,63 @@ export function AdhocPullCard() {
             </span>
           )}
         </div>
+
+        {preview?.diagnostics && (
+          <div className="mt-2 p-3 rounded-md border border-border bg-muted/40 text-xs space-y-1">
+            <div className="font-medium text-foreground">Match breakdown</div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-1 text-muted-foreground">
+              <div>
+                <span className="font-semibold text-foreground">
+                  {preview.diagnostics.totalMatchingAnyDate.toLocaleString()}
+                </span>{" "}
+                total calls match campaign + dispositions
+              </div>
+              <div>
+                <span className="font-semibold text-foreground">
+                  {preview.diagnostics.totalMatchingInRange.toLocaleString()}
+                </span>{" "}
+                of those fall in {dateFrom} → {dateTo}
+              </div>
+              <div>
+                <span className="font-semibold text-foreground">
+                  {preview.diagnostics.alreadyDownloaded.toLocaleString()}
+                </span>{" "}
+                already downloaded (excluded)
+              </div>
+              <div>
+                <span className="font-semibold text-foreground">
+                  {preview.count.toLocaleString()}
+                </span>{" "}
+                pending — what gets queued
+              </div>
+            </div>
+            {(preview.diagnostics.minDate || preview.diagnostics.maxDate) && (
+              <div className="text-muted-foreground pt-1 border-t border-border/50">
+                Available data for these dispositions spans{" "}
+                <span className="font-mono text-foreground">{preview.diagnostics.minDate ?? "—"}</span>
+                {" → "}
+                <span className="font-mono text-foreground">{preview.diagnostics.maxDate ?? "—"}</span>
+                {preview.count === 0 && preview.diagnostics.totalMatchingAnyDate > 0 &&
+                  preview.diagnostics.totalMatchingInRange === 0 && (
+                    <span className="ml-2 text-amber-700">
+                      → no calls in your date range; widen it.
+                    </span>
+                  )}
+                {preview.count === 0 && preview.diagnostics.totalMatchingInRange > 0 &&
+                  preview.diagnostics.alreadyDownloaded === preview.diagnostics.totalMatchingInRange && (
+                    <span className="ml-2 text-amber-700">
+                      → everything in range was already downloaded.
+                    </span>
+                  )}
+                {preview.diagnostics.totalMatchingAnyDate === 0 && (
+                  <span className="ml-2 text-amber-700">
+                    → no calls at all match this campaign + disposition combo.
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {showStatus && (
           <div

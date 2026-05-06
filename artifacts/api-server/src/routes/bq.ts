@@ -1060,12 +1060,74 @@ function adhocRulesFromBody(body: z.infer<typeof AdhocPullSchema>): PendingRecor
 router.post("/bq/queue-recordings/preview", async (req, res) => {
   try {
     const body = AdhocPullSchema.parse(req.body);
-    const ids = await findPendingRecordingContactIds({
-      rules: adhocRulesFromBody(body),
-      dateFrom: body.dateFrom,
-      dateTo: body.dateTo,
+    const rules = adhocRulesFromBody(body);
+    const projectId = getGcpProjectId();
+    const bq = getBigQueryClient("US");
+
+    const ruleParams = rules.map((r) => ({
+      campaign_name: r.campaignName,
+      disposition_pattern: r.dispositionPattern,
+    }));
+
+    const [diagRows] = (await bq.query({
+      query: `
+        WITH matched AS (
+          SELECT
+            CAST(c.contact_id AS STRING) AS contact_id,
+            DATE(c.contact_start_date) AS d
+          FROM \`${projectId}.incontact.calls\` c
+          WHERE EXISTS (
+            SELECT 1 FROM UNNEST(@rules) AS rule
+            WHERE c.campaign_name = rule.campaign_name
+              AND c.primary_disposition_name LIKE rule.disposition_pattern
+          )
+        ),
+        matched_in_range AS (
+          SELECT contact_id FROM matched
+          WHERE d >= @date_from AND d <= @date_to
+        ),
+        downloaded_in_range AS (
+          SELECT m.contact_id
+          FROM matched_in_range m
+          JOIN \`${projectId}.incontact.call_recordings\` r
+            ON CAST(r.acd_contact_id AS STRING) = m.contact_id
+        ),
+        pending_in_range AS (
+          SELECT contact_id FROM matched_in_range
+          EXCEPT DISTINCT
+          SELECT contact_id FROM downloaded_in_range
+        )
+        SELECT
+          (SELECT COUNT(*) FROM matched) AS total_matching_any_date,
+          (SELECT COUNT(*) FROM matched_in_range) AS total_matching_in_range,
+          (SELECT COUNT(*) FROM downloaded_in_range) AS already_downloaded,
+          (SELECT COUNT(*) FROM pending_in_range) AS pending,
+          (SELECT MIN(d) FROM matched) AS min_date,
+          (SELECT MAX(d) FROM matched) AS max_date,
+          ARRAY(SELECT contact_id FROM pending_in_range LIMIT 5) AS sample
+      `,
+      params: { rules: ruleParams, date_from: body.dateFrom, date_to: body.dateTo },
+      types: {
+        rules: [{ campaign_name: "STRING", disposition_pattern: "STRING" }],
+        date_from: "DATE",
+        date_to: "DATE",
+      },
+    } as any)) as [Array<any>];
+
+    const row = diagRows[0] ?? {};
+    const fmtDate = (v: any) =>
+      v == null ? null : typeof v === "string" ? v : v.value ?? String(v);
+    res.json({
+      count: Number(row.pending ?? 0),
+      sample: Array.isArray(row.sample) ? row.sample : [],
+      diagnostics: {
+        totalMatchingAnyDate: Number(row.total_matching_any_date ?? 0),
+        totalMatchingInRange: Number(row.total_matching_in_range ?? 0),
+        alreadyDownloaded: Number(row.already_downloaded ?? 0),
+        minDate: fmtDate(row.min_date),
+        maxDate: fmtDate(row.max_date),
+      },
     });
-    res.json({ count: ids.length, sample: ids.slice(0, 5) });
   } catch (err: any) {
     if (err?.issues) {
       res.status(400).json({ error: "Invalid request", details: err.issues });
