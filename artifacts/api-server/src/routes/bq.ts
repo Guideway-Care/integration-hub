@@ -36,15 +36,19 @@ export function buildPendingRecordingsQuery(opts: PendingRecordingsQueryOptions)
 } {
   const projectId = getGcpProjectId();
   const dateFrom = opts.dateFrom || DEFAULT_PENDING_RECORDINGS_FLOOR;
+  const campaignNames = opts.rules.map((r) => r.campaignName);
+  const dispositionPatterns = opts.rules.map((r) => r.dispositionPattern);
   const query = `
     SELECT CAST(c.contact_id AS STRING) AS contact_id
     FROM \`${projectId}.incontact.calls\` c
     LEFT JOIN \`${projectId}.incontact.call_recordings\` r
       ON CAST(c.contact_id AS STRING) = CAST(r.acd_contact_id AS STRING)
     WHERE EXISTS (
-        SELECT 1 FROM UNNEST(@rules) AS rule
-        WHERE c.campaign_name = rule.campaign_name
-          AND c.primary_disposition_name LIKE rule.disposition_pattern
+        SELECT 1
+        FROM UNNEST(@campaign_names) AS cn WITH OFFSET pos
+        JOIN UNNEST(@disposition_patterns) AS dp WITH OFFSET dpos ON pos = dpos
+        WHERE c.campaign_name = cn
+          AND c.primary_disposition_name LIKE dp
       )
       AND r.acd_contact_id IS NULL
       AND DATE(c.contact_start_date) >= @date_from
@@ -54,15 +58,14 @@ export function buildPendingRecordingsQuery(opts: PendingRecordingsQueryOptions)
   return {
     query,
     params: {
-      rules: opts.rules.map((r) => ({
-        campaign_name: r.campaignName,
-        disposition_pattern: r.dispositionPattern,
-      })),
+      campaign_names: campaignNames,
+      disposition_patterns: dispositionPatterns,
       date_from: dateFrom,
       date_to: opts.dateTo ?? null,
     },
     types: {
-      rules: [{ campaign_name: "STRING", disposition_pattern: "STRING" }],
+      campaign_names: ["STRING"],
+      disposition_patterns: ["STRING"],
       date_from: "DATE",
       date_to: "DATE",
     },
@@ -1064,10 +1067,8 @@ router.post("/bq/queue-recordings/preview", async (req, res) => {
     const projectId = getGcpProjectId();
     const bq = getBigQueryClient("US");
 
-    const ruleParams = rules.map((r) => ({
-      campaign_name: r.campaignName,
-      disposition_pattern: r.dispositionPattern,
-    }));
+    const campaignNames = rules.map((r) => r.campaignName);
+    const dispositionPatterns = rules.map((r) => r.dispositionPattern);
 
     const [diagRows] = (await bq.query({
       query: `
@@ -1077,9 +1078,11 @@ router.post("/bq/queue-recordings/preview", async (req, res) => {
             DATE(c.contact_start_date) AS d
           FROM \`${projectId}.incontact.calls\` c
           WHERE EXISTS (
-            SELECT 1 FROM UNNEST(@rules) AS rule
-            WHERE c.campaign_name = rule.campaign_name
-              AND c.primary_disposition_name LIKE rule.disposition_pattern
+            SELECT 1
+            FROM UNNEST(@campaign_names) AS cn WITH OFFSET pos
+            JOIN UNNEST(@disposition_patterns) AS dp WITH OFFSET dpos ON pos = dpos
+            WHERE c.campaign_name = cn
+              AND c.primary_disposition_name LIKE dp
           )
         ),
         matched_in_range AS (
@@ -1106,9 +1109,15 @@ router.post("/bq/queue-recordings/preview", async (req, res) => {
           (SELECT MAX(d) FROM matched) AS max_date,
           ARRAY(SELECT contact_id FROM pending_in_range LIMIT 5) AS sample
       `,
-      params: { rules: ruleParams, date_from: body.dateFrom, date_to: body.dateTo },
+      params: {
+        campaign_names: campaignNames,
+        disposition_patterns: dispositionPatterns,
+        date_from: body.dateFrom,
+        date_to: body.dateTo,
+      },
       types: {
-        rules: [{ campaign_name: "STRING", disposition_pattern: "STRING" }],
+        campaign_names: ["STRING"],
+        disposition_patterns: ["STRING"],
         date_from: "DATE",
         date_to: "DATE",
       },
