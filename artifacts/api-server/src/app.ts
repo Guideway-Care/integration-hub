@@ -8,6 +8,24 @@ import { syncSimpleSchedulerJob } from "./services/cloud-run";
 
 void (async () => {
   try {
+    const { GoogleAuth } = await import("google-auth-library" as string);
+    const auth = new GoogleAuth({ scopes: ["https://www.googleapis.com/auth/cloud-platform"] });
+    const client = await auth.getClient();
+    const creds = (client as any).email ?? (client as any)?.credentials?.client_email ?? null;
+    const keyId =
+      (client as any)?.key?.private_key_id ??
+      (client as any)?.credentials?.private_key_id ??
+      null;
+    const projectId = await auth.getProjectId().catch(() => null);
+    logger.info(
+      { runtimeServiceAccount: creds, gcpProjectId: projectId, keyId },
+      "[startup] Resolved GCP runtime identity",
+    );
+  } catch (err: any) {
+    logger.error({ err: err.message }, "[startup] Failed to resolve GCP runtime identity");
+  }
+
+  try {
     const result = await syncSimpleSchedulerJob({
       jobName: "incontact-agents-daily",
       schedule: "0 6 * * *",
