@@ -51,8 +51,8 @@ export function buildPendingRecordingsQuery(opts: PendingRecordingsQueryOptions)
           AND c.primary_disposition_name LIKE dp
       )
       AND r.acd_contact_id IS NULL
-      AND DATE(c.contact_start_date) >= @date_from
-      AND (@date_to IS NULL OR DATE(c.contact_start_date) <= @date_to)
+      AND DATE(c.contact_start_date) >= DATE(@date_from)
+      AND (@date_to IS NULL OR DATE(c.contact_start_date) <= DATE(@date_to))
     ORDER BY c.contact_start_date ASC
   `;
   return {
@@ -66,8 +66,8 @@ export function buildPendingRecordingsQuery(opts: PendingRecordingsQueryOptions)
     types: {
       campaign_names: ["STRING"],
       disposition_patterns: ["STRING"],
-      date_from: "DATE",
-      date_to: "DATE",
+      date_from: "STRING",
+      date_to: "STRING",
     },
   };
 }
@@ -1087,7 +1087,7 @@ router.post("/bq/queue-recordings/preview", async (req, res) => {
         ),
         matched_in_range AS (
           SELECT contact_id FROM matched
-          WHERE d >= @date_from AND d <= @date_to
+          WHERE d >= DATE(@date_from) AND d <= DATE(@date_to)
         ),
         downloaded_in_range AS (
           SELECT m.contact_id
@@ -1118,8 +1118,8 @@ router.post("/bq/queue-recordings/preview", async (req, res) => {
       types: {
         campaign_names: ["STRING"],
         disposition_patterns: ["STRING"],
-        date_from: "DATE",
-        date_to: "DATE",
+        date_from: "STRING",
+        date_to: "STRING",
       },
     } as any)) as [Array<any>];
 
