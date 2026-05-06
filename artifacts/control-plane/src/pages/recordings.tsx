@@ -44,11 +44,13 @@ export default function RecordingsPage() {
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["recordings"],
-    queryFn: () => api.get<Recording[]>("/bq/recordings"),
+    queryFn: () => api.get<{ rows: Recording[]; total?: number } | Recording[]>("/bq/recordings"),
     retry: false,
   });
 
-  const allRecordings = data ?? [];
+  const allRecordings: Recording[] = Array.isArray(data)
+    ? data
+    : (data?.rows ?? []);
   const filtered = search
     ? allRecordings.filter(
         (r) =>
