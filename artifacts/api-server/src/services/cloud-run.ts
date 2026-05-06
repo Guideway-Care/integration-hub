@@ -170,8 +170,25 @@ export async function syncSimpleSchedulerJob(spec: SimpleSchedulerJobSpec): Prom
     return { schedulerJobName: spec.jobName, action: "updated" };
   } catch (err: any) {
     if (err.code === 5) {
-      await client.createJob({ parent, job: jobBody });
-      return { schedulerJobName: spec.jobName, action: "created" };
+      try {
+        await client.createJob({ parent, job: jobBody });
+        return { schedulerJobName: spec.jobName, action: "created" };
+      } catch (createErr: any) {
+        if (createErr.code === 7) {
+          throw new Error(
+            `[Cloud Scheduler] Cannot create job "${spec.jobName}" — runtime SA lacks roles/cloudscheduler.admin (and possibly roles/iam.serviceAccountUser on ${jobBody.httpTarget.oidcToken.serviceAccountEmail}). Apply infra/main.tf or grant manually. Underlying error: ${createErr.message}`,
+          );
+        }
+        throw createErr;
+      }
+    }
+    if (err.code === 7) {
+      // PERMISSION_DENIED is ambiguous: either the job doesn't exist and the SA
+      // can't see it, or the job exists but the SA can't manage it. Either way,
+      // the SA needs roles/cloudscheduler.admin so the bootstrap can recover.
+      throw new Error(
+        `[Cloud Scheduler] PERMISSION_DENIED on getJob("${jobPath}") — runtime SA lacks roles/cloudscheduler.admin on the project. Without it, the daily job will never be created or updated. Apply infra/main.tf (api_server_scheduler_admin / api_controller_hub_dev_scheduler_admin) or grant the role manually. Underlying error: ${err.message}`,
+      );
     }
     throw err;
   }

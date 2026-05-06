@@ -209,6 +209,46 @@ resource "google_project_iam_member" "scheduler_run_invoker" {
   member  = "serviceAccount:${google_service_account.scheduler.email}"
 }
 
+# The API server bootstraps Cloud Scheduler jobs (incontact-agents-daily,
+# incontact-contacts-daily) at startup via syncSimpleSchedulerJob. It needs
+# permission to read/create/update those jobs. Bind to both:
+#   - api-server-sa (the Terraform-managed Cloud Run SA)
+#   - api-controller-hub-dev (the SA whose key powers the Replit deployment
+#     today via GCP_SERVICE_ACCOUNT_KEY). Not managed by Terraform; binding by
+#     literal email so the grant is correct for whichever runtime is active.
+resource "google_project_iam_member" "api_server_scheduler_admin" {
+  project = var.project_id
+  role    = "roles/cloudscheduler.admin"
+  member  = "serviceAccount:${google_service_account.api_server.email}"
+}
+
+resource "google_project_iam_member" "api_server_scheduler_sa_user" {
+  project = var.project_id
+  role    = "roles/iam.serviceAccountUser"
+  member  = "serviceAccount:${google_service_account.api_server.email}"
+}
+
+resource "google_project_iam_member" "api_controller_hub_dev_scheduler_admin" {
+  project = var.project_id
+  role    = "roles/cloudscheduler.admin"
+  member  = "serviceAccount:api-controller-hub-dev@${var.project_id}.iam.gserviceaccount.com"
+}
+
+# Required because the scheduler jobs use an oidcToken impersonating
+# scheduler-sa; whoever creates/updates the job must be able to
+# actAs that service account.
+resource "google_service_account_iam_member" "api_controller_hub_dev_act_as_scheduler" {
+  service_account_id = google_service_account.scheduler.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:api-controller-hub-dev@${var.project_id}.iam.gserviceaccount.com"
+}
+
+resource "google_service_account_iam_member" "api_server_act_as_scheduler" {
+  service_account_id = google_service_account.scheduler.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.api_server.email}"
+}
+
 resource "google_iam_workload_identity_pool" "github" {
   workload_identity_pool_id = "github-pool"
   display_name              = "GitHub Actions Pool"

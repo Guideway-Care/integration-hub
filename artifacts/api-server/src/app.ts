@@ -17,7 +17,10 @@ void (async () => {
     });
     logger.info({ result }, "[startup] Synced incontact-agents-daily Cloud Scheduler job");
   } catch (err: any) {
-    logger.warn({ err: err.message }, "[startup] Failed to sync incontact-agents-daily job (non-fatal)");
+    logger.error(
+      { err: err.message },
+      "[startup] Failed to sync incontact-agents-daily Cloud Scheduler job — daily extraction WILL NOT FIRE until this is resolved",
+    );
   }
 
   try {
@@ -30,7 +33,10 @@ void (async () => {
     });
     logger.info({ result }, "[startup] Synced incontact-contacts-daily Cloud Scheduler job");
   } catch (err: any) {
-    logger.warn({ err: err.message }, "[startup] Failed to sync incontact-contacts-daily job (non-fatal)");
+    logger.error(
+      { err: err.message },
+      "[startup] Failed to sync incontact-contacts-daily Cloud Scheduler job — daily extraction WILL NOT FIRE until this is resolved",
+    );
   }
 })();
 

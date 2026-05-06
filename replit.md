@@ -65,6 +65,7 @@ Operational console for the NICE/InContact extraction pipeline, pulling Contacts
 - **Typechecking**: Always run `pnpm run typecheck` from the root to ensure correct type validation across all composite TypeScript projects.
 - **Daily vs. Ad-hoc Downloads**: Daily and ad-hoc call recording downloads are mutually exclusive due to in-process locks.
 - **InContact Daily Jobs**: Agents pipeline runs at 6:00 AM Chicago, Contacts pipeline at 6:30 AM Chicago. Both use Chicago-local day boundaries.
+- **Cloud Scheduler bootstrap**: `incontact-agents-daily` and `incontact-contacts-daily` are auto-synced from `app.ts` on every API server boot. The runtime SA must hold `roles/cloudscheduler.admin` on the project AND `roles/iam.serviceAccountUser` on `scheduler-sa@…` — otherwise `getJob` returns PERMISSION_DENIED, no fallback creates the job, and the daily extraction silently never fires. Bindings live in `infra/main.tf` for both `api-server-sa` (Cloud Run) and `api-controller-hub-dev` (Replit deploy).
 
 ## Pointers
 
