@@ -4,12 +4,15 @@ import pinoHttp from "pino-http";
 import router from "./routes";
 import { logger } from "./lib/logger";
 import { errorHandler } from "./middlewares/error-handler";
-import { syncSimpleSchedulerJob } from "./services/cloud-run";
+import { syncSimpleSchedulerJob, getGcpCredentials } from "./services/cloud-run";
 
 void (async () => {
   try {
     const { GoogleAuth } = await import("google-auth-library" as string);
-    const auth = new GoogleAuth({ scopes: ["https://www.googleapis.com/auth/cloud-platform"] });
+    const auth = new GoogleAuth({
+      ...getGcpCredentials(),
+      scopes: ["https://www.googleapis.com/auth/cloud-platform"],
+    });
     const client = await auth.getClient();
     const creds = (client as any).email ?? (client as any)?.credentials?.client_email ?? null;
     const keyId =

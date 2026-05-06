@@ -8,6 +8,23 @@ function getGcpConfig(): { projectId: string; region: string } {
   return { projectId, region };
 }
 
+// Mirrors the credential-resolution pattern used by gcp-clients.ts so that all
+// GCP API clients in the api-server authenticate as the SA whose key is stored
+// in GCP_SERVICE_ACCOUNT_KEY. Without this, GoogleAuth falls back to ambient
+// metadata (Replit's compute identity), which has no IAM grants in our project.
+export function getGcpCredentials(): { credentials?: any; projectId?: string } {
+  const gcpKey = process.env.GCP_SERVICE_ACCOUNT_KEY;
+  if (gcpKey) {
+    try {
+      const parsed = JSON.parse(gcpKey);
+      return { credentials: parsed, projectId: parsed.project_id };
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
 export async function triggerCloudRunJob(
   runId: string,
   endpointId: string,
@@ -27,7 +44,7 @@ export async function triggerCloudRunJob(
     throw new Error("@google-cloud/run not available. Install it for GCP deployments.");
   });
 
-  const jobsClient = new v2.JobsClient();
+  const jobsClient = new v2.JobsClient(getGcpCredentials());
   const parent = `projects/${projectId}/locations/${region}/jobs/${jobName}`;
 
   const [execution] = await jobsClient.runJob({
@@ -73,7 +90,7 @@ export async function syncSchedulerJob(spec: SchedulerJobSpec): Promise<{
     throw new Error("@google-cloud/scheduler not available. Install it for GCP deployments.");
   });
 
-  const client = new CloudSchedulerClient();
+  const client = new CloudSchedulerClient(getGcpCredentials());
   const parent = `projects/${projectId}/locations/${region}`;
   const jobPath = `${parent}/jobs/${schedulerJobName}`;
 
@@ -145,7 +162,7 @@ export async function syncSimpleSchedulerJob(spec: SimpleSchedulerJobSpec): Prom
     throw new Error("@google-cloud/scheduler not available. Install it for GCP deployments.");
   });
 
-  const client = new CloudSchedulerClient();
+  const client = new CloudSchedulerClient(getGcpCredentials());
   const parent = `projects/${projectId}/locations/${region}`;
   const jobPath = `${parent}/jobs/${spec.jobName}`;
 
