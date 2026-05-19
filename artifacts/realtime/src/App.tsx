@@ -11,6 +11,7 @@ import Skills from "@/pages/Skills";
 import Teams from "@/pages/Teams";
 import Contacts from "@/pages/Contacts";
 import Settings from "@/pages/Settings";
+import { IncontactApi } from "@/pages/IncontactApi";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient();
@@ -25,6 +26,7 @@ function Router() {
         <Route path="/teams" component={Teams} />
         <Route path="/contacts" component={Contacts} />
         <Route path="/settings" component={Settings} />
+        <Route path="/reference/incontact-api" component={IncontactApi} />
         <Route component={NotFound} />
       </Switch>
     </Layout>

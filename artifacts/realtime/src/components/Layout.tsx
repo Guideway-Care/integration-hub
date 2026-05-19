@@ -10,6 +10,8 @@ import {
   CircleDot,
   PanelLeftClose,
   PanelLeftOpen,
+  BookOpen,
+  Code2,
 } from "lucide-react";
 import { useSettingsStore } from "@/hooks/use-nice-data";
 
@@ -27,13 +29,29 @@ export function Layout({ children }: { children: ReactNode }) {
     window.localStorage.setItem(COLLAPSED_KEY, collapsed ? "1" : "0");
   }, [collapsed]);
 
-  const navItems = [
-    { href: "/", label: "Overview", icon: Activity },
-    { href: "/contacts", label: "Contacts", icon: Phone },
-    { href: "/agents", label: "Agents", icon: Users },
-    { href: "/skills", label: "Skills", icon: Layers },
-    { href: "/teams", label: "Teams", icon: Network },
-    { href: "/settings", label: "Settings", icon: Settings },
+  const navGroups: {
+    label: string | null;
+    icon?: typeof Activity;
+    items: { href: string; label: string; icon: typeof Activity }[];
+  }[] = [
+    {
+      label: null,
+      items: [
+        { href: "/", label: "Overview", icon: Activity },
+        { href: "/contacts", label: "Contacts", icon: Phone },
+        { href: "/agents", label: "Agents", icon: Users },
+        { href: "/skills", label: "Skills", icon: Layers },
+        { href: "/teams", label: "Teams", icon: Network },
+        { href: "/settings", label: "Settings", icon: Settings },
+      ],
+    },
+    {
+      label: "Reference",
+      icon: BookOpen,
+      items: [
+        { href: "/reference/incontact-api", label: "InContact API", icon: Code2 },
+      ],
+    },
   ];
 
   return (
@@ -74,26 +92,48 @@ export function Layout({ children }: { children: ReactNode }) {
           </button>
         </div>
 
-        <nav className={`flex-1 space-y-1 ${collapsed ? "p-2" : "p-4"}`}>
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = location === item.href;
+        <nav className={`flex-1 space-y-4 ${collapsed ? "p-2" : "p-4"}`}>
+          {navGroups.map((group, gi) => {
+            const GroupIcon = group.icon;
             return (
-              <Link
-                key={item.href}
-                href={item.href}
-                title={collapsed ? item.label : undefined}
-                className={`flex items-center rounded-md text-sm transition-colors ${
-                  collapsed ? "justify-center px-2 py-2" : "gap-3 px-3 py-2"
-                } ${
-                  isActive
-                    ? "bg-primary/10 text-primary font-medium"
-                    : "text-muted-foreground hover:bg-accent hover:text-foreground"
-                }`}
-              >
-                <Icon className="w-4 h-4 shrink-0" />
-                {!collapsed && <span>{item.label}</span>}
-              </Link>
+              <div key={gi} className="space-y-1">
+                {group.label && (
+                  collapsed ? (
+                    <div
+                      className="flex justify-center py-1 text-muted-foreground/60"
+                      title={group.label}
+                    >
+                      {GroupIcon && <GroupIcon className="w-3.5 h-3.5" />}
+                    </div>
+                  ) : (
+                    <div className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70 flex items-center gap-1.5">
+                      {GroupIcon && <GroupIcon className="w-3 h-3" />}
+                      {group.label}
+                    </div>
+                  )
+                )}
+                {group.items.map((item) => {
+                  const Icon = item.icon;
+                  const isActive = location === item.href;
+                  return (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      title={collapsed ? item.label : undefined}
+                      className={`flex items-center rounded-md text-sm transition-colors ${
+                        collapsed ? "justify-center px-2 py-2" : "gap-3 px-3 py-2"
+                      } ${
+                        isActive
+                          ? "bg-primary/10 text-primary font-medium"
+                          : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                      }`}
+                    >
+                      <Icon className="w-4 h-4 shrink-0" />
+                      {!collapsed && <span>{item.label}</span>}
+                    </Link>
+                  );
+                })}
+              </div>
             );
           })}
         </nav>
