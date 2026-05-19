@@ -9,14 +9,6 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command";
 import { ChatTranscriptSheet } from "./ChatTranscriptSheet";
 import { ContactDetailsSheet } from "./ContactDetailsSheet";
 import { formatDistanceToNow } from "date-fns";
@@ -535,12 +527,32 @@ function DirectionBadge({ value }: { value: Direction }) {
 
 function FilterSelect({ label, value, onChange, options }: FilterSelectProps) {
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
   const allLabel = `All ${label.toLowerCase()}s`;
   const display = value === ALL ? allLabel : value;
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return options;
+    return options.filter((o) => o.toLowerCase().includes(q));
+  }, [options, query]);
+
+  function pick(v: string) {
+    onChange(v);
+    setOpen(false);
+    setQuery("");
+  }
+
   return (
     <div className="flex items-center gap-1.5">
       <span className="text-xs text-muted-foreground">{label}:</span>
-      <Popover open={open} onOpenChange={setOpen}>
+      <Popover
+        open={open}
+        onOpenChange={(o) => {
+          setOpen(o);
+          if (!o) setQuery("");
+        }}
+      >
         <PopoverTrigger asChild>
           <button
             type="button"
@@ -553,39 +565,40 @@ function FilterSelect({ label, value, onChange, options }: FilterSelectProps) {
           </button>
         </PopoverTrigger>
         <PopoverContent className="w-[220px] p-0" align="start">
-          <Command>
-            <CommandInput placeholder={`Search ${label.toLowerCase()}…`} className="h-8 text-xs" />
-            <CommandList className="max-h-[260px]">
-              <CommandEmpty>No matches.</CommandEmpty>
-              <CommandGroup>
-                <CommandItem
-                  value={allLabel}
-                  onSelect={() => {
-                    onChange(ALL);
-                    setOpen(false);
-                  }}
-                  className="text-xs"
+          <div className="p-2 border-b border-border">
+            <input
+              autoFocus
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={`Search ${label.toLowerCase()}…`}
+              className="w-full h-7 px-2 text-xs bg-background border border-input rounded outline-none focus:ring-1 focus:ring-ring"
+            />
+          </div>
+          <div className="max-h-[260px] overflow-y-auto py-1">
+            <button
+              type="button"
+              onClick={() => pick(ALL)}
+              className="w-full text-left text-xs px-2 py-1.5 flex items-center hover:bg-accent/60"
+            >
+              <Check className={`w-3 h-3 mr-2 shrink-0 ${value === ALL ? "opacity-100" : "opacity-0"}`} />
+              <span className="truncate">{allLabel}</span>
+            </button>
+            {filtered.length === 0 ? (
+              <div className="px-2 py-2 text-xs text-muted-foreground">No matches.</div>
+            ) : (
+              filtered.map((opt) => (
+                <button
+                  key={opt}
+                  type="button"
+                  onClick={() => pick(opt)}
+                  className="w-full text-left text-xs px-2 py-1.5 flex items-center hover:bg-accent/60"
                 >
-                  <Check className={`w-3 h-3 mr-2 ${value === ALL ? "opacity-100" : "opacity-0"}`} />
-                  {allLabel}
-                </CommandItem>
-                {options.map((opt) => (
-                  <CommandItem
-                    key={opt}
-                    value={opt}
-                    onSelect={() => {
-                      onChange(opt);
-                      setOpen(false);
-                    }}
-                    className="text-xs"
-                  >
-                    <Check className={`w-3 h-3 mr-2 ${value === opt ? "opacity-100" : "opacity-0"}`} />
-                    <span className="truncate">{opt}</span>
-                  </CommandItem>
-                ))}
-              </CommandGroup>
-            </CommandList>
-          </Command>
+                  <Check className={`w-3 h-3 mr-2 shrink-0 ${value === opt ? "opacity-100" : "opacity-0"}`} />
+                  <span className="truncate">{opt}</span>
+                </button>
+              ))
+            )}
+          </div>
         </PopoverContent>
       </Popover>
     </div>
