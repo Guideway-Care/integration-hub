@@ -1,19 +1,31 @@
-import { ReactNode } from "react";
+import { ReactNode, useEffect, useState } from "react";
 import { Link, useLocation } from "wouter";
-import { 
-  Activity, 
-  Users, 
-  Network, 
-  Layers, 
+import {
+  Activity,
+  Users,
+  Network,
+  Layers,
   Phone,
   Settings,
-  CircleDot
+  CircleDot,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
 import { useSettingsStore } from "@/hooks/use-nice-data";
+
+const COLLAPSED_KEY = "nice-live:sidebar-collapsed";
 
 export function Layout({ children }: { children: ReactNode }) {
   const [location] = useLocation();
   const { isPaused } = useSettingsStore();
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(COLLAPSED_KEY) === "1";
+  });
+
+  useEffect(() => {
+    window.localStorage.setItem(COLLAPSED_KEY, collapsed ? "1" : "0");
+  }, [collapsed]);
 
   const navItems = [
     { href: "/", label: "Overview", icon: Activity },
@@ -26,55 +38,98 @@ export function Layout({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col md:flex-row">
-      <aside className="w-full md:w-64 border-r border-border bg-card flex flex-col">
-        <div className="p-4 border-b border-border flex items-center gap-3">
-          <div className="w-8 h-8 bg-primary/20 flex items-center justify-center rounded">
+      <aside
+        className={`w-full border-r border-border bg-card flex flex-col transition-[width] duration-200 ${
+          collapsed ? "md:w-16" : "md:w-64"
+        }`}
+      >
+        <div
+          className={`border-b border-border flex items-center ${
+            collapsed ? "p-3 md:justify-center" : "p-4 gap-3"
+          }`}
+        >
+          <div className="w-8 h-8 bg-primary/20 flex items-center justify-center rounded shrink-0">
             <Activity className="w-5 h-5 text-primary" />
           </div>
-          <div>
-            <h1 className="font-bold text-sm tracking-widest uppercase">NICE Live</h1>
-            <p className="text-xs text-muted-foreground">Operations Center</p>
-          </div>
+          {!collapsed && (
+            <div className="min-w-0 flex-1">
+              <h1 className="font-bold text-sm tracking-widest uppercase">NICE Live</h1>
+              <p className="text-xs text-muted-foreground">Operations Center</p>
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => setCollapsed((c) => !c)}
+            aria-label={collapsed ? "Expand menu" : "Collapse menu"}
+            title={collapsed ? "Expand menu" : "Collapse menu"}
+            className={`hidden md:inline-flex items-center justify-center w-7 h-7 rounded text-muted-foreground hover:bg-accent hover:text-foreground transition-colors ${
+              collapsed ? "mt-2" : ""
+            }`}
+          >
+            {collapsed ? (
+              <PanelLeftOpen className="w-4 h-4" />
+            ) : (
+              <PanelLeftClose className="w-4 h-4" />
+            )}
+          </button>
         </div>
-        
-        <nav className="flex-1 p-4 space-y-1">
+
+        <nav className={`flex-1 space-y-1 ${collapsed ? "p-2" : "p-4"}`}>
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = location === item.href;
             return (
-              <Link 
-                key={item.href} 
+              <Link
+                key={item.href}
                 href={item.href}
-                className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
-                  isActive 
-                    ? "bg-primary/10 text-primary font-medium" 
+                title={collapsed ? item.label : undefined}
+                className={`flex items-center rounded-md text-sm transition-colors ${
+                  collapsed ? "justify-center px-2 py-2" : "gap-3 px-3 py-2"
+                } ${
+                  isActive
+                    ? "bg-primary/10 text-primary font-medium"
                     : "text-muted-foreground hover:bg-accent hover:text-foreground"
                 }`}
               >
-                <Icon className="w-4 h-4" />
-                {item.label}
+                <Icon className="w-4 h-4 shrink-0" />
+                {!collapsed && <span>{item.label}</span>}
               </Link>
             );
           })}
         </nav>
 
-        <div className="p-4 border-t border-border">
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-muted-foreground">Status</span>
-            <div className="flex items-center gap-1.5">
-              <CircleDot className={`w-3 h-3 ${isPaused ? "text-amber-500" : "text-emerald-500 animate-pulse-slow"}`} />
-              <span className={isPaused ? "text-amber-500" : "text-emerald-500"}>
-                {isPaused ? "PAUSED" : "LIVE"}
-              </span>
+        <div className={`border-t border-border ${collapsed ? "p-2" : "p-4"}`}>
+          {collapsed ? (
+            <div
+              className="flex justify-center"
+              title={isPaused ? "PAUSED" : "LIVE"}
+            >
+              <CircleDot
+                className={`w-4 h-4 ${
+                  isPaused ? "text-amber-500" : "text-emerald-500 animate-pulse-slow"
+                }`}
+              />
             </div>
-          </div>
+          ) : (
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-muted-foreground">Status</span>
+              <div className="flex items-center gap-1.5">
+                <CircleDot
+                  className={`w-3 h-3 ${
+                    isPaused ? "text-amber-500" : "text-emerald-500 animate-pulse-slow"
+                  }`}
+                />
+                <span className={isPaused ? "text-amber-500" : "text-emerald-500"}>
+                  {isPaused ? "PAUSED" : "LIVE"}
+                </span>
+              </div>
+            </div>
+          )}
         </div>
       </aside>
-      
+
       <main className="flex-1 overflow-auto bg-background/50">
-        <div className="p-6 h-full">
-          {children}
-        </div>
+        <div className="p-6 h-full">{children}</div>
       </main>
     </div>
   );
