@@ -3,14 +3,20 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { MessageSquare, Phone, Mail, FileText, Clock, Filter, X, ArrowDownLeft, ArrowUpRight, ArrowUp, ArrowDown, ChevronsUpDown } from "lucide-react";
+import { MessageSquare, Phone, Mail, FileText, Clock, Filter, X, ArrowDownLeft, ArrowUpRight, ArrowUp, ArrowDown, ChevronsUpDown, Check } from "lucide-react";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import { ChatTranscriptSheet } from "./ChatTranscriptSheet";
 import { ContactDetailsSheet } from "./ContactDetailsSheet";
 import { formatDistanceToNow } from "date-fns";
@@ -528,22 +534,60 @@ function DirectionBadge({ value }: { value: Direction }) {
 }
 
 function FilterSelect({ label, value, onChange, options }: FilterSelectProps) {
+  const [open, setOpen] = useState(false);
+  const allLabel = `All ${label.toLowerCase()}s`;
+  const display = value === ALL ? allLabel : value;
   return (
     <div className="flex items-center gap-1.5">
       <span className="text-xs text-muted-foreground">{label}:</span>
-      <Select value={value} onValueChange={onChange}>
-        <SelectTrigger className="h-7 text-xs w-[160px] bg-background">
-          <SelectValue placeholder={`All ${label.toLowerCase()}s`} />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value={ALL}>All {label.toLowerCase()}s</SelectItem>
-          {options.map((opt) => (
-            <SelectItem key={opt} value={opt} className="text-xs">
-              {opt}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            role="combobox"
+            aria-expanded={open}
+            className="h-7 text-xs w-[160px] bg-background border border-input rounded-md px-2.5 inline-flex items-center justify-between gap-1 hover:bg-accent/40 transition-colors"
+          >
+            <span className="truncate text-left">{display}</span>
+            <ChevronsUpDown className="w-3 h-3 opacity-50 shrink-0" />
+          </button>
+        </PopoverTrigger>
+        <PopoverContent className="w-[220px] p-0" align="start">
+          <Command>
+            <CommandInput placeholder={`Search ${label.toLowerCase()}…`} className="h-8 text-xs" />
+            <CommandList className="max-h-[260px]">
+              <CommandEmpty>No matches.</CommandEmpty>
+              <CommandGroup>
+                <CommandItem
+                  value={allLabel}
+                  onSelect={() => {
+                    onChange(ALL);
+                    setOpen(false);
+                  }}
+                  className="text-xs"
+                >
+                  <Check className={`w-3 h-3 mr-2 ${value === ALL ? "opacity-100" : "opacity-0"}`} />
+                  {allLabel}
+                </CommandItem>
+                {options.map((opt) => (
+                  <CommandItem
+                    key={opt}
+                    value={opt}
+                    onSelect={() => {
+                      onChange(opt);
+                      setOpen(false);
+                    }}
+                    className="text-xs"
+                  >
+                    <Check className={`w-3 h-3 mr-2 ${value === opt ? "opacity-100" : "opacity-0"}`} />
+                    <span className="truncate">{opt}</span>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            </CommandList>
+          </Command>
+        </PopoverContent>
+      </Popover>
     </div>
   );
 }
