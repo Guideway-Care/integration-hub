@@ -59,6 +59,7 @@ type SortKey =
   | "direction"
   | "contactId"
   | "from"
+  | "campaign"
   | "skill"
   | "agent"
   | "state"
@@ -87,6 +88,7 @@ function sortValue(c: any, key: SortKey): string | number {
     case "direction": return direction(c);
     case "contactId": return Number(c?.contactId ?? c?.ContactId ?? 0) || 0;
     case "from": return fromLabel(c).toLowerCase();
+    case "campaign": return campaignLabel(c).toLowerCase();
     case "skill": return skillLabel(c).toLowerCase();
     case "agent": return agentLabel(c).toLowerCase();
     case "state": return stateLabel(c).toLowerCase();
@@ -323,6 +325,7 @@ export function ContactsTable({ contacts }: ContactsTableProps) {
               <SortHeader label="Direction" sortKey="direction" current={sortKey} dir={sortDir} onClick={toggleSort} />
               <SortHeader label="Contact ID" sortKey="contactId" current={sortKey} dir={sortDir} onClick={toggleSort} />
               <SortHeader label="From" sortKey="from" current={sortKey} dir={sortDir} onClick={toggleSort} />
+              <SortHeader label="Campaign" sortKey="campaign" current={sortKey} dir={sortDir} onClick={toggleSort} />
               <SortHeader label="Skill" sortKey="skill" current={sortKey} dir={sortDir} onClick={toggleSort} />
               <SortHeader label="Agent" sortKey="agent" current={sortKey} dir={sortDir} onClick={toggleSort} />
               <SortHeader label="State" sortKey="state" current={sortKey} dir={sortDir} onClick={toggleSort} />
@@ -333,7 +336,7 @@ export function ContactsTable({ contacts }: ContactsTableProps) {
           <tbody className="divide-y divide-border/30">
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={9} className="px-4 py-8 text-center text-sm text-muted-foreground">
+                <td colSpan={10} className="px-4 py-8 text-center text-sm text-muted-foreground">
                   No contacts match the current filters.
                 </td>
               </tr>
@@ -350,6 +353,7 @@ export function ContactsTable({ contacts }: ContactsTableProps) {
                 c.ANI ||
                 "—";
               const skill = c.skillName || c.SkillName || c.skillId || "—";
+              const campaign = c.campaignName || c.CampaignName || c.campaignId || "—";
               const agent =
                 c.agentName ||
                 c.AgentName ||
@@ -376,6 +380,7 @@ export function ContactsTable({ contacts }: ContactsTableProps) {
                   </td>
                   <td className="px-4 py-3 font-mono text-xs">{contactId || "—"}</td>
                   <td className="px-4 py-3 text-muted-foreground">{String(from)}</td>
+                  <td className="px-4 py-3 text-muted-foreground">{String(campaign)}</td>
                   <td className="px-4 py-3 text-muted-foreground">{String(skill)}</td>
                   <td className="px-4 py-3 text-muted-foreground">{String(agent)}</td>
                   <td className="px-4 py-3">
