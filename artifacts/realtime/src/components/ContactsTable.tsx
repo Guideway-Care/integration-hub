@@ -44,6 +44,10 @@ function skillLabel(c: any): string {
   return String(c?.skillName || c?.SkillName || c?.skillId || "—");
 }
 
+function campaignLabel(c: any): string {
+  return String(c?.campaignName || c?.CampaignName || c?.campaignId || "—");
+}
+
 function agentLabel(c: any): string {
   if (c?.agentName) return String(c.agentName);
   if (c?.AgentName) return String(c.AgentName);
@@ -158,6 +162,7 @@ export function ContactsTable({ contacts }: ContactsTableProps) {
   const [detailsContact, setDetailsContact] = useState<any | null>(null);
   const [typeFilter, setTypeFilter] = useState<string>(ALL);
   const [directionFilter, setDirectionFilter] = useState<string>(ALL);
+  const [campaignFilter, setCampaignFilter] = useState<string>(ALL);
   const [skillFilter, setSkillFilter] = useState<string>(ALL);
   const [agentFilter, setAgentFilter] = useState<string>(ALL);
   const [activeOnly, setActiveOnly] = useState<boolean>(true);
@@ -195,6 +200,12 @@ export function ContactsTable({ contacts }: ContactsTableProps) {
     return Array.from(set).sort();
   }, [validContacts]);
 
+  const campaignOptions = useMemo(() => {
+    const set = new Set<string>();
+    validContacts.forEach((c) => set.add(campaignLabel(c)));
+    return Array.from(set).sort();
+  }, [validContacts]);
+
   const skillOptions = useMemo(() => {
     const set = new Set<string>();
     validContacts.forEach((c) => set.add(skillLabel(c)));
@@ -212,22 +223,25 @@ export function ContactsTable({ contacts }: ContactsTableProps) {
       if (activeOnly && !isReallyActive(c)) return false;
       if (typeFilter !== ALL && mediaLabel(c) !== typeFilter) return false;
       if (directionFilter !== ALL && direction(c) !== directionFilter) return false;
+      if (campaignFilter !== ALL && campaignLabel(c) !== campaignFilter) return false;
       if (skillFilter !== ALL && skillLabel(c) !== skillFilter) return false;
       if (agentFilter !== ALL && agentLabel(c) !== agentFilter) return false;
       return true;
     });
     return [...out].sort((a, b) => compareSort(a, b, sortKey, sortDir));
-  }, [validContacts, activeOnly, typeFilter, directionFilter, skillFilter, agentFilter, sortKey, sortDir]);
+  }, [validContacts, activeOnly, typeFilter, directionFilter, campaignFilter, skillFilter, agentFilter, sortKey, sortDir]);
 
   const anyFilterActive =
     typeFilter !== ALL ||
     directionFilter !== ALL ||
+    campaignFilter !== ALL ||
     skillFilter !== ALL ||
     agentFilter !== ALL;
 
   function clearFilters() {
     setTypeFilter(ALL);
     setDirectionFilter(ALL);
+    setCampaignFilter(ALL);
     setSkillFilter(ALL);
     setAgentFilter(ALL);
   }
@@ -265,6 +279,12 @@ export function ContactsTable({ contacts }: ContactsTableProps) {
           value={directionFilter}
           onChange={setDirectionFilter}
           options={["Inbound", "Outbound", "Unknown"]}
+        />
+        <FilterSelect
+          label="Campaign"
+          value={campaignFilter}
+          onChange={setCampaignFilter}
+          options={campaignOptions}
         />
         <FilterSelect
           label="Skill"
