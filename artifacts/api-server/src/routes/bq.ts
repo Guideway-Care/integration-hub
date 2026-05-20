@@ -1307,6 +1307,231 @@ router.post("/bq/queue-recordings/adhoc/run", async (req, res) => {
   }
 });
 
+const BatchIdSchema = z.object({
+  batchId: z.string().regex(/^adhoc_[A-Za-z0-9_\-:.]+$/, "Invalid batchId"),
+});
+
+// Single source of truth: a 'processing' row older than this is considered stuck.
+// Kept low (vs. the processor's own 30-min self-reset) so the UI/operator-initiated
+// resume is responsive when a Cloud Run execution dies mid-flight.
+const ADHOC_STALE_MINUTES = 5;
+
+router.get("/bq/adhoc-batch-progress", async (req, res) => {
+  try {
+    const batchId = String(req.query.batchId || "");
+    if (!/^adhoc_[A-Za-z0-9_\-:.]+$/.test(batchId)) {
+      res.status(400).json({ error: "Invalid batchId" });
+      return;
+    }
+    const { staging } = getBqTables();
+    const bq = getBigQueryClient("US");
+    const [rows] = await bq.query({
+      query: `
+        SELECT
+          status,
+          COUNT(*) AS n,
+          COUNTIF(status = 'processing' AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, MINUTE) > @stale) AS stale
+        FROM \`${staging}\`
+        WHERE batch_id = @batchId
+        GROUP BY status
+      `,
+      params: { batchId, stale: ADHOC_STALE_MINUTES },
+      types: { batchId: "STRING", stale: "INT64" },
+    });
+    const counts: Record<string, number> = { pending: 0, processing: 0, downloaded: 0, failed: 0 };
+    let stale = 0;
+    for (const r of rows as any[]) {
+      const s = String(r.status || "").toLowerCase();
+      const n = Number(r.n || 0);
+      if (s in counts) counts[s] = n;
+      stale += Number(r.stale || 0);
+    }
+    const total = counts.pending + counts.processing + counts.downloaded + counts.failed;
+    res.json({
+      batchId,
+      total,
+      counts,
+      staleProcessing: stale,
+      staleThresholdMinutes: ADHOC_STALE_MINUTES,
+    });
+  } catch (err: any) {
+    console.error("[bq/adhoc-batch-progress]", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/bq/adhoc-reset-stale", async (req, res) => {
+  try {
+    const { batchId } = BatchIdSchema.parse(req.body);
+    // Refuse to reset while a download job is actively writing to staging —
+    // otherwise we'd flip rows out from under a live processor.
+    if (adhocDownloadJob.status === "running") {
+      res.status(409).json({ error: "Ad-hoc download is running — wait or cancel before resetting" });
+      return;
+    }
+    if (downloadJob.status === "running") {
+      res.status(409).json({ error: "Daily download pipeline is running — cannot reset stale rows now" });
+      return;
+    }
+    const { staging } = getBqTables();
+    const bq = getBigQueryClient("US");
+    const [job] = await bq.createQueryJob({
+      query: `
+        UPDATE \`${staging}\`
+        SET status = 'pending', error_message = NULL
+        WHERE batch_id = @batchId
+          AND status = 'processing'
+          AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, MINUTE) > @stale
+      `,
+      params: { batchId, stale: ADHOC_STALE_MINUTES },
+      types: { batchId: "STRING", stale: "INT64" },
+    });
+    await job.getQueryResults();
+    const [meta] = await job.getMetadata();
+    const affected = Number(meta?.statistics?.query?.numDmlAffectedRows || 0);
+    res.json({ batchId, reset: affected });
+  } catch (err: any) {
+    if (err?.issues) {
+      res.status(400).json({ error: "Invalid request", details: err.issues });
+      return;
+    }
+    console.error("[bq/adhoc-reset-stale]", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/bq/adhoc-resume", async (req, res) => {
+  let lockAcquired = false;
+  try {
+    const { batchId } = BatchIdSchema.parse(req.body);
+    const { staging, bucket } = getBqTables();
+
+    if (adhocDownloadJob.status === "running") {
+      res.status(409).json({ error: "Ad-hoc download is already running", step: adhocDownloadJob.step });
+      return;
+    }
+    if (downloadJob.status === "running") {
+      res.status(409).json({ error: "Daily download pipeline is currently running — wait for it to finish", step: downloadJob.step });
+      return;
+    }
+
+    // Claim the in-process lock IMMEDIATELY (before any awaits) so a concurrent
+    // /adhoc-resume or /adhoc/run can't pass the same gate. We unwind in the
+    // catch block (and via the validation branches below) if we bail out.
+    adhocDownloadJob = {
+      status: "running",
+      step: "resume-validating",
+      batchId,
+      gcsPath: `gs://${bucket}/call_list/${batchId}.txt`,
+      startedAt: new Date().toISOString(),
+    };
+    lockAcquired = true;
+
+    const releaseLock = (extra: Partial<typeof adhocDownloadJob> = {}) => {
+      adhocDownloadJob = {
+        ...adhocDownloadJob,
+        status: "idle",
+        step: "",
+        completedAt: new Date().toISOString(),
+        ...extra,
+      };
+      lockAcquired = false;
+    };
+
+    // Verify the batch exists and there's actually work left
+    const bq = getBigQueryClient("US");
+    const [rows] = await bq.query({
+      query: `
+        SELECT
+          COUNTIF(status = 'pending') AS pending,
+          COUNTIF(status = 'processing' AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, MINUTE) > @stale) AS stale_processing,
+          COUNT(*) AS total
+        FROM \`${staging}\`
+        WHERE batch_id = @batchId
+      `,
+      params: { batchId, stale: ADHOC_STALE_MINUTES },
+      types: { batchId: "STRING", stale: "INT64" },
+    });
+    const row = (rows as any[])[0] || { pending: 0, stale_processing: 0, total: 0 };
+    if (Number(row.total) === 0) {
+      releaseLock();
+      res.status(404).json({ error: `No rows found in staging for batch ${batchId}` });
+      return;
+    }
+
+    // Auto-reset stale processing rows so the processor will pick them up
+    let reset = 0;
+    if (Number(row.stale_processing) > 0) {
+      const [resetJob] = await bq.createQueryJob({
+        query: `
+          UPDATE \`${staging}\`
+          SET status = 'pending', error_message = NULL
+          WHERE batch_id = @batchId
+            AND status = 'processing'
+            AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, MINUTE) > @stale
+        `,
+        params: { batchId, stale: ADHOC_STALE_MINUTES },
+        types: { batchId: "STRING", stale: "INT64" },
+      });
+      await resetJob.getQueryResults();
+      const [resetMeta] = await resetJob.getMetadata();
+      reset = Number(resetMeta?.statistics?.query?.numDmlAffectedRows || 0);
+    }
+
+    if (Number(row.pending) === 0 && reset === 0) {
+      releaseLock();
+      res.status(409).json({
+        error: "Nothing to resume — no pending or stale processing rows for this batch",
+        batchId,
+      });
+      return;
+    }
+
+    adhocDownloadJob = {
+      ...adhocDownloadJob,
+      step: "resume-processor-running",
+    };
+
+    res.json({ message: "Resume started", batchId, status: "running", staleReset: reset });
+
+    (async () => {
+      try {
+        console.log(`[adhoc-resume] Processor restart for batch ${batchId} (reset ${reset} stale)`);
+        const processorResult = await triggerInContactCloudRunJob("incontact-call-processor");
+        adhocDownloadJob.processorExecution = processorResult.executionName;
+        const processorStatus = await waitForExecution(processorResult.executionName);
+        if (!processorStatus.succeeded) {
+          throw new Error(`Processor failed: ${processorStatus.error || "unknown error"}`);
+        }
+        adhocDownloadJob.status = "completed";
+        adhocDownloadJob.step = "done";
+        adhocDownloadJob.completedAt = new Date().toISOString();
+        console.log("[adhoc-resume] Completed");
+      } catch (err: any) {
+        adhocDownloadJob.status = "failed";
+        adhocDownloadJob.error = err.message;
+        adhocDownloadJob.completedAt = new Date().toISOString();
+        console.error("[adhoc-resume] Failed:", err.message);
+      }
+    })();
+  } catch (err: any) {
+    if (lockAcquired) {
+      adhocDownloadJob = {
+        ...adhocDownloadJob,
+        status: "failed",
+        error: err?.message || "Unknown error",
+        completedAt: new Date().toISOString(),
+      };
+    }
+    if (err?.issues) {
+      res.status(400).json({ error: "Invalid request", details: err.issues });
+      return;
+    }
+    console.error("[bq/adhoc-resume]", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get("/bq/distinct-campaigns", async (_req, res) => {
   try {
     const projectId = getGcpProjectId();

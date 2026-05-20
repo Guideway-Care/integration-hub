@@ -13,6 +13,8 @@ import {
   X,
   Clock,
   Download,
+  RefreshCw,
+  RotateCw,
 } from "lucide-react";
 
 type PreviewDiagnostics = {
@@ -36,6 +38,15 @@ type AdhocStatus = {
   error?: string;
 };
 type DailyStatus = { status: string; phase?: string };
+type BatchProgress = {
+  batchId: string;
+  total: number;
+  counts: { pending: number; processing: number; downloaded: number; failed: number };
+  staleProcessing: number;
+  staleThresholdMinutes?: number;
+};
+
+const ACTIVE_BATCH_KEY = "incontact:adhoc:active-batch";
 
 function todayMinusDays(days: number): string {
   const d = new Date();
@@ -142,7 +153,19 @@ export function AdhocPullCard() {
   const [dateFrom, setDateFrom] = useState(() => todayMinusDays(7));
   const [dateTo, setDateTo] = useState(() => todayMinusDays(0));
   const [preview, setPreview] = useState<PreviewResp | null>(null);
-  const [activeBatchId, setActiveBatchId] = useState<string | null>(null);
+  const [activeBatchId, setActiveBatchId] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    return window.localStorage.getItem(ACTIVE_BATCH_KEY);
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (activeBatchId) {
+      window.localStorage.setItem(ACTIVE_BATCH_KEY, activeBatchId);
+    } else {
+      window.localStorage.removeItem(ACTIVE_BATCH_KEY);
+    }
+  }, [activeBatchId]);
 
   const { data: campaigns } = useQuery({
     queryKey: ["bq-campaigns"],
@@ -171,6 +194,60 @@ export function AdhocPullCard() {
     queryKey: ["adhoc-download-job-status"],
     queryFn: () => api.get<AdhocStatus>("/bq/adhoc-download-job-status"),
     refetchInterval: (q) => (q.state.data?.status === "running" ? 3000 : 15000),
+  });
+
+  // Track the latest known batchId — either the actively running one or the one we last touched.
+  const trackedBatchId = adhocStatus?.batchId || activeBatchId;
+
+  useEffect(() => {
+    if (adhocStatus?.batchId) setActiveBatchId(adhocStatus.batchId);
+  }, [adhocStatus?.batchId]);
+
+  const { data: progress, isFetching: progressFetching } = useQuery({
+    queryKey: ["adhoc-batch-progress", trackedBatchId],
+    queryFn: () =>
+      api.get<BatchProgress>(
+        `/bq/adhoc-batch-progress?batchId=${encodeURIComponent(trackedBatchId!)}`,
+      ),
+    enabled: !!trackedBatchId,
+    refetchInterval: (q) => {
+      const p = q.state.data;
+      if (!p) return false;
+      const live = p.counts.pending > 0 || p.counts.processing > 0;
+      return live ? 5000 : 20000;
+    },
+  });
+
+  const resumeMutation = useMutation({
+    mutationFn: (batchId: string) =>
+      api.post<{ message: string; staleReset: number }>("/bq/adhoc-resume", { batchId }),
+    onSuccess: (data) => {
+      toast({
+        title: "Resume started",
+        description:
+          data.staleReset > 0
+            ? `Re-queued ${data.staleReset.toLocaleString()} stale row(s); processor running.`
+            : "Processor restarted on remaining pending rows.",
+      });
+      queryClient.invalidateQueries({ queryKey: ["adhoc-download-job-status"] });
+      queryClient.invalidateQueries({ queryKey: ["adhoc-batch-progress", trackedBatchId] });
+    },
+    onError: (err) =>
+      toast({ title: "Resume failed", description: (err as Error).message, variant: "destructive" }),
+  });
+
+  const resetStaleMutation = useMutation({
+    mutationFn: (batchId: string) =>
+      api.post<{ reset: number }>("/bq/adhoc-reset-stale", { batchId }),
+    onSuccess: (data) => {
+      toast({
+        title: "Stale rows reset",
+        description: `${data.reset.toLocaleString()} row(s) flipped back to pending.`,
+      });
+      queryClient.invalidateQueries({ queryKey: ["adhoc-batch-progress", trackedBatchId] });
+    },
+    onError: (err) =>
+      toast({ title: "Reset failed", description: (err as Error).message, variant: "destructive" }),
   });
 
   // Reset selected dispositions when campaign changes
@@ -238,10 +315,19 @@ export function AdhocPullCard() {
   useEffect(() => {
     if (adhocStatus?.status === "completed" && activeBatchId) {
       queryClient.invalidateQueries({ queryKey: ["recordings"] });
+      queryClient.invalidateQueries({ queryKey: ["adhoc-batch-progress", activeBatchId] });
     }
   }, [adhocStatus?.status, activeBatchId, queryClient]);
 
   const showStatus = adhocStatus && adhocStatus.status !== "idle";
+  const incomplete =
+    !!progress && (progress.counts.pending > 0 || progress.staleProcessing > 0);
+  const canResume =
+    !!trackedBatchId &&
+    incomplete &&
+    !isAdhocActive &&
+    !isDailyActive &&
+    !resumeMutation.isPending;
 
   return (
     <div className="border border-border rounded-lg bg-card mb-6">
@@ -464,6 +550,180 @@ export function AdhocPullCard() {
             {adhocStatus!.error && <div className="mt-1">Error: {adhocStatus!.error}</div>}
           </div>
         )}
+
+        {trackedBatchId && progress && progress.total > 0 && (
+          <BatchProgressPanel
+            batchId={trackedBatchId}
+            progress={progress}
+            fetching={progressFetching}
+            canResume={canResume}
+            isAdhocActive={isAdhocActive}
+            isDailyActive={isDailyActive}
+            resuming={resumeMutation.isPending}
+            resetting={resetStaleMutation.isPending}
+            onResume={() => resumeMutation.mutate(trackedBatchId)}
+            onReset={() => resetStaleMutation.mutate(trackedBatchId)}
+            onClear={() => setActiveBatchId(null)}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function BatchProgressPanel({
+  batchId,
+  progress,
+  fetching,
+  canResume,
+  isAdhocActive,
+  isDailyActive,
+  resuming,
+  resetting,
+  onResume,
+  onReset,
+  onClear,
+}: {
+  batchId: string;
+  progress: BatchProgress;
+  fetching: boolean;
+  canResume: boolean;
+  isAdhocActive: boolean;
+  isDailyActive: boolean;
+  resuming: boolean;
+  resetting: boolean;
+  onResume: () => void;
+  onReset: () => void;
+  onClear: () => void;
+}) {
+  const { counts, total, staleProcessing } = progress;
+  const pct = (n: number) => (total > 0 ? (n / total) * 100 : 0);
+  const remaining = counts.pending + counts.processing;
+  const allDone = remaining === 0;
+
+  const resumeTitle = isDailyActive
+    ? "Blocked while the daily download is running"
+    : isAdhocActive
+      ? "An ad-hoc download is already in progress"
+      : allDone
+        ? "Nothing left to resume — all rows are done"
+        : "Restart the processor on remaining pending rows";
+
+  return (
+    <div className="mt-2 p-3 rounded-md border border-border bg-muted/30 text-xs space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <div className="font-medium text-foreground inline-flex items-center gap-1.5">
+          {fetching ? <RefreshCw className="w-3 h-3 animate-spin opacity-60" /> : <Download className="w-3 h-3 opacity-60" />}
+          Batch progress
+          <span className="font-mono text-[11px] text-muted-foreground">{batchId}</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          {staleProcessing > 0 && (
+            <button
+              type="button"
+              onClick={onReset}
+              disabled={resetting || isAdhocActive || isDailyActive}
+              title="Flip rows stuck in 'processing' for >5 min back to 'pending'"
+              className="inline-flex items-center gap-1 px-2 py-1 border border-amber-300 bg-amber-50 text-amber-800 rounded text-[11px] hover:bg-amber-100 disabled:opacity-50"
+            >
+              {resetting ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCw className="w-3 h-3" />}
+              Reset {staleProcessing} stale
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onResume}
+            disabled={!canResume}
+            title={resumeTitle}
+            className="inline-flex items-center gap-1 px-2 py-1 border border-primary bg-primary text-primary-foreground rounded text-[11px] hover:opacity-90 disabled:opacity-50"
+          >
+            {resuming ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
+            Resume
+          </button>
+          {allDone && !isAdhocActive && (
+            <button
+              type="button"
+              onClick={onClear}
+              title="Stop tracking this batch"
+              className="inline-flex items-center justify-center w-5 h-5 rounded text-muted-foreground hover:bg-muted"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="flex w-full h-2.5 rounded overflow-hidden bg-muted border border-border/60">
+        <div className="bg-emerald-500" style={{ width: `${pct(counts.downloaded)}%` }} title={`${counts.downloaded} downloaded`} />
+        <div className="bg-blue-500" style={{ width: `${pct(counts.processing)}%` }} title={`${counts.processing} processing`} />
+        <div className="bg-amber-400" style={{ width: `${pct(counts.pending)}%` }} title={`${counts.pending} pending`} />
+        <div className="bg-red-500" style={{ width: `${pct(counts.failed)}%` }} title={`${counts.failed} failed`} />
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-[11px]">
+        <Stat color="emerald" label="Downloaded" value={counts.downloaded} pct={pct(counts.downloaded)} />
+        <Stat color="blue" label="Processing" value={counts.processing} pct={pct(counts.processing)} />
+        <Stat color="amber" label="Pending" value={counts.pending} pct={pct(counts.pending)} />
+        <Stat color="red" label="Failed" value={counts.failed} pct={pct(counts.failed)} />
+        <Stat color="slate" label="Total" value={total} pct={100} />
+      </div>
+
+      {staleProcessing > 0 && (
+        <div className="flex items-start gap-1.5 text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">
+          <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
+          <span>
+            {staleProcessing.toLocaleString()} row{staleProcessing === 1 ? "" : "s"} stuck in <code>processing</code> for &gt;{" "}
+            {progress.staleThresholdMinutes ?? 5} min.
+            Resume will auto-reset them; or click <strong>Reset stale</strong> first.
+          </span>
+        </div>
+      )}
+
+      {allDone && counts.failed === 0 && (
+        <div className="text-[11px] text-emerald-700 inline-flex items-center gap-1">
+          <CheckCircle2 className="w-3 h-3" />
+          All {total.toLocaleString()} recordings downloaded.
+        </div>
+      )}
+      {allDone && counts.failed > 0 && (
+        <div className="text-[11px] text-red-700 inline-flex items-center gap-1">
+          <XCircle className="w-3 h-3" />
+          Done with {counts.failed.toLocaleString()} failure{counts.failed === 1 ? "" : "s"} (check error_message in <code>staging_call_queue</code>).
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Stat({
+  color,
+  label,
+  value,
+  pct,
+}: {
+  color: "emerald" | "blue" | "amber" | "red" | "slate";
+  label: string;
+  value: number;
+  pct: number;
+}) {
+  const dot: Record<typeof color, string> = {
+    emerald: "bg-emerald-500",
+    blue: "bg-blue-500",
+    amber: "bg-amber-400",
+    red: "bg-red-500",
+    slate: "bg-slate-400",
+  };
+  return (
+    <div className="px-2 py-1.5 rounded border border-border bg-background">
+      <div className="flex items-center gap-1.5 text-muted-foreground">
+        <span className={`w-2 h-2 rounded-full ${dot[color]}`} />
+        {label}
+      </div>
+      <div className="font-semibold text-foreground tabular-nums">
+        {value.toLocaleString()}
+        <span className="ml-1 font-normal text-muted-foreground text-[10px]">
+          {pct.toFixed(0)}%
+        </span>
       </div>
     </div>
   );
