@@ -1131,6 +1131,12 @@ export default function InContactPage() {
     },
   });
 
+  const { data: adhocJob } = useQuery({
+    queryKey: ["adhoc-download-job-status"],
+    queryFn: () => api.get<{ status: string }>("/bq/adhoc-download-job-status"),
+    refetchInterval: 5000,
+  });
+
   const runProcessorMutation = useMutation({
     mutationFn: () => api.post("/bq/run-job"),
     onSuccess: () => {
@@ -1177,6 +1183,23 @@ export default function InContactPage() {
     onError: (err) => {
       toast({ title: "Reset failed", description: (err as Error).message, variant: "destructive" });
     },
+  });
+
+  const resetStuckMutation = useMutation({
+    mutationFn: () => api.post<{ reset: number }>("/bq/staging-reset-stuck-processing"),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["staging-summary"] });
+      queryClient.invalidateQueries({ queryKey: ["staging-queue"] });
+      toast({
+        title: "Reset stuck rows",
+        description:
+          data.reset > 0
+            ? `${data.reset.toLocaleString()} stuck 'processing' row(s) flipped back to pending.`
+            : "No stuck rows older than 5 min — try again later.",
+      });
+    },
+    onError: (err) =>
+      toast({ title: "Reset failed", description: (err as Error).message, variant: "destructive" }),
   });
 
   const fetchApiMutation = useMutation({
@@ -1699,6 +1722,19 @@ export default function InContactPage() {
                     Retry Failed
                   </button>
                 )}
+                {(summary?.processing ?? 0) > 0
+                  && downloadJobStatus?.status !== "running"
+                  && adhocJob?.status !== "running" && (
+                  <button
+                    onClick={() => resetStuckMutation.mutate()}
+                    disabled={resetStuckMutation.isPending}
+                    title="Flip rows stuck in 'processing' for >5 min back to pending (use when a previous run crashed mid-download)"
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 border border-amber-300 bg-amber-50 text-amber-800 rounded text-xs hover:bg-amber-100 disabled:opacity-50"
+                  >
+                    {resetStuckMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />}
+                    Reset Stuck
+                  </button>
+                )}
               </div>
             </div>
           </PipelineStep>
@@ -2182,6 +2218,21 @@ export default function InContactPage() {
                   {resetFailedMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />}
                   Reset Failed to Pending
                 </button>
+                {(summary?.processing ?? 0) > 0 && (
+                  <button
+                    onClick={() => resetStuckMutation.mutate()}
+                    disabled={
+                      resetStuckMutation.isPending
+                      || downloadJobStatus?.status === "running"
+                      || adhocJob?.status === "running"
+                    }
+                    title="Flip rows stuck in 'processing' for >5 min back to pending"
+                    className="w-full inline-flex items-center gap-2 px-3 py-2 border border-amber-300 bg-amber-50 text-amber-800 rounded-md text-sm hover:bg-amber-100 disabled:opacity-50"
+                  >
+                    {resetStuckMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />}
+                    Reset Stuck Processing to Pending
+                  </button>
+                )}
                 <button
                   onClick={() => runProcessorMutation.mutate()}
                   disabled={runProcessorMutation.isPending || downloadJobStatus?.status === "running"}

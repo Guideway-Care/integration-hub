@@ -295,6 +295,40 @@ router.post("/bq/staging-reset-failed", async (_req, res) => {
   }
 });
 
+// Flip rows stuck in 'processing' (Cloud Run died mid-download) back to 'pending'.
+// Shares ADHOC_STALE_MINUTES (5 min) with /bq/adhoc-reset-stale for consistent semantics.
+router.post("/bq/staging-reset-stuck-processing", async (_req, res) => {
+  try {
+    if (downloadJob.status === "running") {
+      res.status(409).json({ error: "Daily download pipeline is running — wait or cancel before resetting" });
+      return;
+    }
+    if (adhocDownloadJob.status === "running") {
+      res.status(409).json({ error: "Ad-hoc download is running — wait before resetting" });
+      return;
+    }
+    const bq = getBigQueryClient("US");
+    const { staging } = getBqTables();
+    const [job] = await bq.createQueryJob({
+      query: `
+        UPDATE \`${staging}\`
+        SET status = 'pending', error_message = NULL
+        WHERE status = 'processing'
+          AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, MINUTE) > @stale
+      `,
+      params: { stale: ADHOC_STALE_MINUTES },
+      types: { stale: "INT64" },
+    });
+    await job.getQueryResults();
+    const [meta] = await job.getMetadata();
+    const affected = Number(meta?.statistics?.query?.numDmlAffectedRows || 0);
+    res.json({ message: "Stuck processing rows reset to pending", reset: affected });
+  } catch (err: any) {
+    console.error("[bq/staging-reset-stuck-processing]", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post("/bq/staging-clear", async (_req, res) => {
   try {
     const bq = getBigQueryClient("US");
