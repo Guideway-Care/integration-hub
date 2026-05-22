@@ -2,6 +2,40 @@ import { BigQuery } from "@google-cloud/bigquery";
 import { SecretManagerServiceClient } from "@google-cloud/secret-manager";
 import { Storage } from "@google-cloud/storage";
 import { Readable } from "stream";
+import { pipeline } from "stream/promises";
+
+// Network errors worth retrying once. NICE/S3 occasionally closes long-running
+// media downloads mid-stream — most of the time the same pre-signed URL still
+// works for a quick second attempt.
+const TRANSIENT_NETWORK_CODES = new Set([
+  "UND_ERR_SOCKET",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_BODY_TIMEOUT",
+  "ECONNRESET",
+  "ETIMEDOUT",
+  "EPIPE",
+]);
+
+function isTransientNetworkError(err) {
+  if (!err) return false;
+  const cause = err.cause || {};
+  const codes = [err.code, cause.code, err.name, cause.name, err.message].filter(Boolean);
+  if (codes.some((c) => typeof c === "string" && TRANSIENT_NETWORK_CODES.has(c))) return true;
+  // undici surfaces aborts as TypeError("terminated") with cause.code='UND_ERR_SOCKET'
+  if (err.name === "TypeError" && /terminated|aborted|fetch failed/i.test(err.message || "")) return true;
+  return false;
+}
+
+async function streamToGcs(responseBody, file) {
+  // pipeline() propagates errors from EVERY stage — including the source
+  // Readable — so a mid-stream socket abort rejects cleanly instead of
+  // crashing the process with an unhandled 'error' event.
+  await pipeline(
+    Readable.fromWeb(responseBody),
+    file.createWriteStream({ contentType: "video/mp4", resumable: false }),
+  );
+}
 
 const PROJECT_ID = process.env.GCP_PROJECT_ID || "guidewaycare-476802";
 const DATASET = "incontact";
@@ -179,30 +213,65 @@ async function processCall(callId, token, resourceServerBaseUri) {
 
   let gcsUri = null;
   let fileSizeBytes = null;
-  const fileUrl = interactionData?.fileToPlayUrl;
+  let fileUrl = interactionData?.fileToPlayUrl;
 
   if (fileUrl) {
-    const mediaResponse = await fetch(fileUrl);
-    if (!mediaResponse.ok || !mediaResponse.body) {
-      throw new Error(
-        `Failed to download recording: HTTP ${mediaResponse.status}`
-      );
-    }
-
     const fileName = `${callId}.mp4`;
     const file = bucket.file(fileName);
-    const contentLength = mediaResponse.headers.get("content-length");
-    fileSizeBytes = contentLength ? parseInt(contentLength) : null;
 
-    const nodeStream = Readable.fromWeb(mediaResponse.body);
-    await new Promise((resolve, reject) => {
-      nodeStream
-        .pipe(
-          file.createWriteStream({ contentType: "video/mp4", resumable: false })
-        )
-        .on("finish", resolve)
-        .on("error", reject);
-    });
+    // Attempt download with up to 2 retries on transient network errors.
+    // Attempt 1: same pre-signed URL (usually still valid within seconds).
+    // Attempt 2: re-fetch metadata to get a fresh pre-signed URL, then try again.
+    let lastErr = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const mediaResponse = await fetch(fileUrl);
+        if (!mediaResponse.ok || !mediaResponse.body) {
+          throw new Error(
+            `Failed to download recording: HTTP ${mediaResponse.status}`,
+          );
+        }
+        const contentLength = mediaResponse.headers.get("content-length");
+        fileSizeBytes = contentLength ? parseInt(contentLength) : null;
+        await streamToGcs(mediaResponse.body, file);
+        if (attempt > 1) {
+          console.log(`  Download succeeded on attempt ${attempt}`);
+        }
+        lastErr = null;
+        break;
+      } catch (err) {
+        lastErr = err;
+        const transient = isTransientNetworkError(err);
+        const code = err.code || err.cause?.code || err.name;
+        console.warn(
+          `  Download attempt ${attempt}/3 failed (${code}): ${err.message}` +
+            (transient ? " — will retry" : ""),
+        );
+        if (!transient || attempt === 3) break;
+        // Backoff: 1s, then 3s
+        await new Promise((r) => setTimeout(r, attempt === 1 ? 1000 : 3000));
+        // On the second retry, refresh the pre-signed URL in case the original expired
+        if (attempt === 2) {
+          try {
+            const refreshed = await fetch(url.toString(), {
+              headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+            });
+            if (refreshed.ok) {
+              const refreshedData = await refreshed.json();
+              const refreshedUrl =
+                refreshedData.interactions?.[0]?.data?.fileToPlayUrl;
+              if (refreshedUrl) {
+                console.log("  Refreshed pre-signed URL for final retry");
+                fileUrl = refreshedUrl;
+              }
+            }
+          } catch (refreshErr) {
+            console.warn(`  URL refresh failed: ${refreshErr.message}`);
+          }
+        }
+      }
+    }
+    if (lastErr) throw lastErr;
 
     gcsUri = `gs://${BUCKET_NAME}/${fileName}`;
     console.log(`  Uploaded ${fileName} to GCS`);
