@@ -45,6 +45,13 @@ type BatchProgress = {
   staleProcessing: number;
   staleThresholdMinutes?: number;
 };
+type RecentBatch = {
+  batchId: string;
+  total: number;
+  counts: { pending: number; processing: number; downloaded: number; failed: number };
+  firstQueuedAt: string | null;
+  lastQueuedAt: string | null;
+};
 
 const ACTIVE_BATCH_KEY = "incontact:adhoc:active-batch";
 

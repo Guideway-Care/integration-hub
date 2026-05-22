@@ -1316,6 +1316,51 @@ const BatchIdSchema = z.object({
 // resume is responsive when a Cloud Run execution dies mid-flight.
 const ADHOC_STALE_MINUTES = 5;
 
+router.get("/bq/adhoc-recent-batches", async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(parseInt(String(req.query.limit || "20"), 10) || 20, 1), 100);
+    const { staging } = getBqTables();
+    const bq = getBigQueryClient("US");
+    const [rows] = await bq.query({
+      query: `
+        SELECT
+          batch_id AS batchId,
+          COUNT(*) AS total,
+          COUNTIF(status = 'pending') AS pending,
+          COUNTIF(status = 'processing') AS processing,
+          COUNTIF(status = 'downloaded') AS downloaded,
+          COUNTIF(status = 'failed') AS failed,
+          MIN(created_at) AS firstQueuedAt,
+          MAX(created_at) AS lastQueuedAt
+        FROM \`${staging}\`
+        WHERE batch_id IS NOT NULL
+          AND STARTS_WITH(batch_id, 'adhoc_')
+        GROUP BY batch_id
+        ORDER BY MAX(created_at) DESC
+        LIMIT @limit
+      `,
+      params: { limit },
+      types: { limit: "INT64" },
+    });
+    const batches = (rows as any[]).map((r) => ({
+      batchId: r.batchId,
+      total: Number(r.total || 0),
+      counts: {
+        pending: Number(r.pending || 0),
+        processing: Number(r.processing || 0),
+        downloaded: Number(r.downloaded || 0),
+        failed: Number(r.failed || 0),
+      },
+      firstQueuedAt: r.firstQueuedAt?.value || r.firstQueuedAt || null,
+      lastQueuedAt: r.lastQueuedAt?.value || r.lastQueuedAt || null,
+    }));
+    res.json({ data: batches });
+  } catch (err: any) {
+    console.error("[bq/adhoc-recent-batches]", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get("/bq/adhoc-batch-progress", async (req, res) => {
   try {
     const batchId = String(req.query.batchId || "");
