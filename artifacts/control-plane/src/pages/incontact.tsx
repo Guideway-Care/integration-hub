@@ -1111,10 +1111,20 @@ export default function InContactPage() {
     }
   }, [transformJobStatus?.status, queryClient]);
 
+  const [step3MinDuration, setStep3MinDuration] = useState<number>(30);
+
   const runLoaderMutation = useMutation({
-    mutationFn: () => api.post<{ queued: number; message?: string }>("/bq/queue-recordings"),
+    mutationFn: () =>
+      api.post<{ queued: number; message?: string; minDurationSeconds?: number }>("/bq/queue-recordings", {
+        minDurationSeconds: step3MinDuration,
+      }),
     onSuccess: (data) => {
-      toast({ title: "Queue recordings complete", description: data.message || `${data.queued} contact IDs written to call list` });
+      toast({
+        title: "Queue recordings complete",
+        description:
+          data.message ||
+          `${data.queued} contact IDs written (min duration ${data.minDurationSeconds ?? step3MinDuration}s)`,
+      });
       queryClient.invalidateQueries({ queryKey: ["call-list-status"] });
     },
     onError: (err) => {
@@ -1639,16 +1649,41 @@ export default function InContactPage() {
             onRun={() => runLoaderMutation.mutate()}
             isRunning={runLoaderMutation.isPending}
           >
-            <div className="flex items-center gap-4 text-sm">
-              <div className="text-center">
-                <div className="text-lg font-bold text-blue-600">{callListStatus?.lineCount?.toLocaleString() ?? 0}</div>
-                <div className="text-xs text-muted-foreground">Contact IDs in Call List</div>
-              </div>
-              <div className="text-center">
-                <div className={`text-lg font-bold ${callListStatus?.exists ? 'text-green-600' : 'text-muted-foreground'}`}>
-                  {callListStatus?.exists ? '✓' : '—'}
+            <div className="space-y-3">
+              <div className="flex items-end gap-3 text-sm flex-wrap">
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">
+                    Min call duration (seconds)
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={step3MinDuration}
+                    onChange={(e) => {
+                      const n = parseInt(e.target.value, 10);
+                      setStep3MinDuration(Number.isFinite(n) && n >= 0 ? n : 0);
+                    }}
+                    disabled={runLoaderMutation.isPending}
+                    className="w-28 px-2 py-1.5 border border-input rounded-md text-sm bg-background"
+                    title="Calls shorter than this will be excluded from the call list (default 30s)"
+                  />
                 </div>
-                <div className="text-xs text-muted-foreground">call_list.txt</div>
+                <div className="text-xs text-muted-foreground pb-2">
+                  Calls shorter than this are skipped. Default 30s.
+                </div>
+              </div>
+              <div className="flex items-center gap-4 text-sm">
+                <div className="text-center">
+                  <div className="text-lg font-bold text-blue-600">{callListStatus?.lineCount?.toLocaleString() ?? 0}</div>
+                  <div className="text-xs text-muted-foreground">Contact IDs in Call List</div>
+                </div>
+                <div className="text-center">
+                  <div className={`text-lg font-bold ${callListStatus?.exists ? 'text-green-600' : 'text-muted-foreground'}`}>
+                    {callListStatus?.exists ? '✓' : '—'}
+                  </div>
+                  <div className="text-xs text-muted-foreground">call_list.txt</div>
+                </div>
               </div>
             </div>
           </PipelineStep>

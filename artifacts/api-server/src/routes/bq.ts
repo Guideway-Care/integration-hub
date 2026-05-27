@@ -25,9 +25,13 @@ export type PendingRecordingsQueryOptions = {
   rules: PendingRecordingsRule[];
   dateFrom?: string;
   dateTo?: string;
+  /** Minimum call duration in seconds. Calls shorter than this are excluded. */
+  minDurationSeconds?: number;
 };
 
 const DEFAULT_PENDING_RECORDINGS_FLOOR = "2026-01-15";
+/** Default min call duration (seconds) — filters out calls too short to be worth pulling audio for. */
+export const DEFAULT_MIN_DURATION_SECONDS = 30;
 
 export function buildPendingRecordingsQuery(opts: PendingRecordingsQueryOptions): {
   query: string;
@@ -38,6 +42,10 @@ export function buildPendingRecordingsQuery(opts: PendingRecordingsQueryOptions)
   const dateFrom = opts.dateFrom || DEFAULT_PENDING_RECORDINGS_FLOOR;
   const campaignNames = opts.rules.map((r) => r.campaignName);
   const dispositionPatterns = opts.rules.map((r) => r.dispositionPattern);
+  const minDuration =
+    opts.minDurationSeconds != null && Number.isFinite(opts.minDurationSeconds)
+      ? Math.max(0, Math.floor(opts.minDurationSeconds))
+      : null;
   const query = `
     SELECT CAST(c.contact_id AS STRING) AS contact_id
     FROM \`${projectId}.incontact.calls\` c
@@ -53,6 +61,7 @@ export function buildPendingRecordingsQuery(opts: PendingRecordingsQueryOptions)
       AND r.acd_contact_id IS NULL
       AND DATE(c.contact_start_date) >= DATE(@date_from)
       AND (@date_to IS NULL OR DATE(c.contact_start_date) <= DATE(@date_to))
+      AND (@min_duration IS NULL OR c.total_duration_seconds >= @min_duration)
     ORDER BY c.contact_start_date ASC
   `;
   return {
@@ -62,12 +71,14 @@ export function buildPendingRecordingsQuery(opts: PendingRecordingsQueryOptions)
       disposition_patterns: dispositionPatterns,
       date_from: dateFrom,
       date_to: opts.dateTo ?? null,
+      min_duration: minDuration,
     },
     types: {
       campaign_names: ["STRING"],
       disposition_patterns: ["STRING"],
       date_from: "STRING",
       date_to: "STRING",
+      min_duration: "INT64",
     },
   };
 }
@@ -1052,22 +1063,31 @@ router.post("/bq/run-job", async (_req, res) => {
   })();
 });
 
-router.post("/bq/queue-recordings", async (_req, res) => {
+router.post("/bq/queue-recordings", async (req, res) => {
   try {
     const { rules, usedFallback } = await loadActiveDailyRules();
-    console.log(`[queue-recordings] Loaded ${rules.length} rule(s)${usedFallback ? " (fallback)" : ""}`);
-    const contactIds = await findPendingRecordingContactIds({ rules });
+    const rawMin = (req.body && typeof req.body === "object")
+      ? (req.body as { minDurationSeconds?: unknown }).minDurationSeconds
+      : undefined;
+    const minDurationSeconds =
+      typeof rawMin === "number" && Number.isFinite(rawMin) && rawMin >= 0
+        ? Math.floor(rawMin)
+        : DEFAULT_MIN_DURATION_SECONDS;
+    console.log(
+      `[queue-recordings] Loaded ${rules.length} rule(s)${usedFallback ? " (fallback)" : ""}, minDurationSeconds=${minDurationSeconds}`,
+    );
+    const contactIds = await findPendingRecordingContactIds({ rules, minDurationSeconds });
     console.log(`[queue-recordings] Found ${contactIds.length} contacts missing recordings`);
 
     if (contactIds.length === 0) {
-      res.json({ queued: 0, rulesUsed: rules.length, usedFallback, message: "No new recordings to queue" });
+      res.json({ queued: 0, rulesUsed: rules.length, usedFallback, minDurationSeconds, message: "No new recordings to queue" });
       return;
     }
 
     const written = await writePendingRecordingsToGcs(contactIds, "call_list/call_list.txt");
     console.log(`[queue-recordings] Wrote ${written.count} contact IDs to gs://${written.bucket}/${written.path}`);
 
-    res.json({ queued: written.count, rulesUsed: rules.length, usedFallback });
+    res.json({ queued: written.count, rulesUsed: rules.length, usedFallback, minDurationSeconds });
   } catch (err: any) {
     const cause = err?.cause ?? err?.original ?? null;
     const causeMsg = cause?.message ?? null;
@@ -1095,6 +1115,8 @@ const AdhocPullSchema = z.object({
   dispositionPatterns: z.array(z.string().min(1)).min(1).optional(),
   dateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   dateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  // Minimum call duration in seconds; client may omit to use the server default.
+  minDurationSeconds: z.number().int().min(0).max(86400).optional(),
 }).refine(
   (v) => Boolean(v.dispositionPattern) || (v.dispositionPatterns && v.dispositionPatterns.length > 0),
   { message: "Provide dispositionPattern (string) or dispositionPatterns (string[])" },
@@ -1118,13 +1140,15 @@ router.post("/bq/queue-recordings/preview", async (req, res) => {
 
     const campaignNames = rules.map((r) => r.campaignName);
     const dispositionPatterns = rules.map((r) => r.dispositionPattern);
+    const minDurationSeconds = body.minDurationSeconds ?? DEFAULT_MIN_DURATION_SECONDS;
 
     const [diagRows] = (await bq.query({
       query: `
         WITH matched AS (
           SELECT
             CAST(c.contact_id AS STRING) AS contact_id,
-            DATE(c.contact_start_date) AS d
+            DATE(c.contact_start_date) AS d,
+            COALESCE(c.total_duration_seconds, 0) >= @min_duration AS meets_duration
           FROM \`${projectId}.incontact.calls\` c
           WHERE EXISTS (
             SELECT 1
@@ -1137,6 +1161,7 @@ router.post("/bq/queue-recordings/preview", async (req, res) => {
         matched_in_range AS (
           SELECT contact_id FROM matched
           WHERE d >= DATE(@date_from) AND d <= DATE(@date_to)
+            AND meets_duration
         ),
         downloaded_in_range AS (
           SELECT m.contact_id
@@ -1151,6 +1176,7 @@ router.post("/bq/queue-recordings/preview", async (req, res) => {
         )
         SELECT
           (SELECT COUNT(*) FROM matched) AS total_matching_any_date,
+          (SELECT COUNT(*) FROM matched WHERE NOT meets_duration) AS excluded_short_calls,
           (SELECT COUNT(*) FROM matched_in_range) AS total_matching_in_range,
           (SELECT COUNT(*) FROM downloaded_in_range) AS already_downloaded,
           (SELECT COUNT(*) FROM pending_in_range) AS pending,
@@ -1163,12 +1189,14 @@ router.post("/bq/queue-recordings/preview", async (req, res) => {
         disposition_patterns: dispositionPatterns,
         date_from: body.dateFrom,
         date_to: body.dateTo,
+        min_duration: minDurationSeconds,
       },
       types: {
         campaign_names: ["STRING"],
         disposition_patterns: ["STRING"],
         date_from: "STRING",
         date_to: "STRING",
+        min_duration: "INT64",
       },
     } as any)) as [Array<any>];
 
@@ -1182,6 +1210,8 @@ router.post("/bq/queue-recordings/preview", async (req, res) => {
         totalMatchingAnyDate: Number(row.total_matching_any_date ?? 0),
         totalMatchingInRange: Number(row.total_matching_in_range ?? 0),
         alreadyDownloaded: Number(row.already_downloaded ?? 0),
+        excludedShortCalls: Number(row.excluded_short_calls ?? 0),
+        minDurationSeconds,
         minDate: fmtDate(row.min_date),
         maxDate: fmtDate(row.max_date),
       },
@@ -1199,10 +1229,12 @@ router.post("/bq/queue-recordings/preview", async (req, res) => {
 router.post("/bq/queue-recordings/adhoc", async (req, res) => {
   try {
     const body = AdhocPullSchema.parse(req.body);
+    const minDurationSeconds = body.minDurationSeconds ?? DEFAULT_MIN_DURATION_SECONDS;
     const ids = await findPendingRecordingContactIds({
       rules: adhocRulesFromBody(body),
       dateFrom: body.dateFrom,
       dateTo: body.dateTo,
+      minDurationSeconds,
     });
     if (ids.length === 0) {
       res.json({ queued: 0, message: "No matching pending contacts found" });

@@ -21,6 +21,8 @@ type PreviewDiagnostics = {
   totalMatchingAnyDate: number;
   totalMatchingInRange: number;
   alreadyDownloaded: number;
+  excludedShortCalls?: number;
+  minDurationSeconds?: number;
   minDate: string | null;
   maxDate: string | null;
 };
@@ -159,6 +161,7 @@ export function AdhocPullCard() {
   const [dispositions, setDispositions] = useState<string[]>([]);
   const [dateFrom, setDateFrom] = useState(() => todayMinusDays(7));
   const [dateTo, setDateTo] = useState(() => todayMinusDays(0));
+  const [minDurationSeconds, setMinDurationSeconds] = useState<number>(30);
   const [preview, setPreview] = useState<PreviewResp | null>(null);
   const [activeBatchId, setActiveBatchId] = useState<string | null>(() => {
     if (typeof window === "undefined") return null;
@@ -281,6 +284,7 @@ export function AdhocPullCard() {
         dispositionPatterns: dispositions,
         dateFrom,
         dateTo,
+        minDurationSeconds,
       }),
     onSuccess: (data) => {
       setPreview(data);
@@ -297,6 +301,7 @@ export function AdhocPullCard() {
         dispositionPatterns: dispositions,
         dateFrom,
         dateTo,
+        minDurationSeconds,
       });
       if (!queued.batchId || queued.queued === 0) return queued;
       await api.post<unknown>("/bq/queue-recordings/adhoc/run", { batchId: queued.batchId });
@@ -380,6 +385,30 @@ export function AdhocPullCard() {
               onChange={(e) => setDateTo(e.target.value)}
               className="w-full px-2 py-1.5 border border-input rounded-md text-sm bg-background"
             />
+          </div>
+        </div>
+
+        <div className="flex items-end gap-3 flex-wrap">
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">
+              Min call duration (seconds)
+            </label>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={minDurationSeconds}
+              onChange={(e) => {
+                const n = parseInt(e.target.value, 10);
+                setMinDurationSeconds(Number.isFinite(n) && n >= 0 ? n : 0);
+                setPreview(null);
+              }}
+              className="w-28 px-2 py-1.5 border border-input rounded-md text-sm bg-background"
+              title="Exclude calls shorter than this duration (default 30s)"
+            />
+          </div>
+          <div className="text-xs text-muted-foreground pb-2">
+            Calls shorter than this are skipped. Default 30s.
           </div>
         </div>
 

@@ -1064,7 +1064,10 @@ async function runContactsScheduledJob(date: string, trigger: "manual" | "schedu
     const { rules, usedFallback } = await bqMod.loadActiveDailyRules();
     contactsScheduledJob.rulesUsed = rules.length;
     contactsScheduledJob.usedFallback = usedFallback;
-    const ids = await bqMod.findPendingRecordingContactIds({ rules });
+    const ids = await bqMod.findPendingRecordingContactIds({
+      rules,
+      minDurationSeconds: bqMod.DEFAULT_MIN_DURATION_SECONDS,
+    });
     contactsScheduledJob.queuedCount = ids.length;
 
     if (ids.length === 0) {
