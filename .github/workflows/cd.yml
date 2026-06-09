@@ -250,8 +250,8 @@ jobs:
               --set-env-vars=GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }} \
               --memory=512Mi \
               --cpu=1 \
-              --max-retries=1 \
-              --task-timeout=7200s
+              --max-retries=3 \
+              --task-timeout=86400s
           else
             gcloud run jobs create incontact-call-processor \
               --image=${{ env.ARTIFACT_REGISTRY }}/incontact-processor:${{ github.sha }} \
@@ -259,8 +259,8 @@ jobs:
               --set-env-vars=GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }} \
               --memory=512Mi \
               --cpu=1 \
-              --max-retries=1 \
-              --task-timeout=7200s
+              --max-retries=3 \
+              --task-timeout=86400s
           fi
 
       - name: Deploy InContact Loader Job

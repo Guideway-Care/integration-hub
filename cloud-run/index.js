@@ -45,7 +45,7 @@ const RECORDINGS_TABLE = `${PROJECT_ID}.${DATASET}.call_recordings`;
 
 const VALID_STATUSES = ["pending", "processing", "downloaded", "failed"];
 const TOKEN_REFRESH_INTERVAL = 50;
-const BATCH_LIMIT = parseInt(process.env.BATCH_LIMIT || "500", 10);
+const BATCH_LIMIT = parseInt(process.env.BATCH_LIMIT || "0", 10); // 0 = no limit: drain the entire staging queue in one execution
 
 const bigquery = new BigQuery({ projectId: PROJECT_ID });
 const gcsStorage = new Storage({ projectId: PROJECT_ID });
@@ -310,7 +310,7 @@ async function main() {
   console.log(`Project: ${PROJECT_ID}`);
   console.log(`Dataset: ${DATASET}`);
   console.log(`Bucket:  ${BUCKET_NAME}`);
-  console.log(`Batch:   ${BATCH_LIMIT} calls`);
+  console.log(`Batch:   ${BATCH_LIMIT > 0 ? `${BATCH_LIMIT} calls` : "unlimited (drain entire queue)"}`);
   console.log("");
 
   await resetStaleProcessingRows();
@@ -335,7 +335,7 @@ async function main() {
   let callsSinceTokenRefresh = 0;
 
   while (true) {
-    if (processedCount + failedCount >= BATCH_LIMIT) {
+    if (BATCH_LIMIT > 0 && processedCount + failedCount >= BATCH_LIMIT) {
       console.log(`Batch limit reached (${BATCH_LIMIT}). Stopping.`);
       break;
     }
@@ -394,9 +394,14 @@ async function main() {
   console.log(`Failed:     ${failedCount}`);
   console.log(`Total:      ${processedCount + failedCount}`);
 
-  if (failedCount > 0) {
-    process.exit(1);
-  }
+  // We intentionally do NOT exit non-zero just because some individual
+  // recordings failed. With no BATCH_LIMIT the loop above runs until the
+  // staging queue has no `pending` rows left, so reaching here means the queue
+  // is fully drained (failed rows are left in 'failed' for separate
+  // inspection/retry). Exiting non-zero here would trigger a pointless Cloud
+  // Run retry of an already-drained queue. Genuine fatal errors still exit(1)
+  // via the .catch below, and a task killed by its timeout is retried by Cloud
+  // Run (resetStaleProcessingRows reclaims the in-flight row) to keep draining.
 }
 
 main().catch((err) => {

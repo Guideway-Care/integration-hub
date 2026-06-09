@@ -310,6 +310,7 @@ router.post("/bq/staging-reset-failed", async (_req, res) => {
 // Shares ADHOC_STALE_MINUTES (5 min) with /bq/adhoc-reset-stale for consistent semantics.
 router.post("/bq/staging-reset-stuck-processing", async (_req, res) => {
   try {
+    await reconcileDownloadJob();
     if (downloadJob.status === "running") {
       res.status(409).json({ error: "Daily download pipeline is running — wait or cancel before resetting" });
       return;
@@ -995,26 +996,25 @@ router.get("/bq/transform-agents-status", async (_req, res) => {
   }
 });
 
-/**
- * Safety cap on how many times the daily download pipeline will re-trigger the
- * processor in a single run. With BATCH_LIMIT=500 per pass this covers up to
- * 50k recordings; the stall guard below stops earlier if a pass makes no
- * progress, so this is just a backstop against an infinite loop.
- */
-const MAX_PROCESSOR_PASSES = 100;
-/** How long to wait for one processor execution. Matches the job's own 2h task timeout (+buffer) so we never trigger an overlapping run. */
-const PROCESSOR_WAIT_MS = 7_300_000;
 /** Loader job task timeout is 30m; give the wait a small buffer over that. */
 const LOADER_WAIT_MS = 1_900_000;
 
-/** Count rows still waiting to be downloaded in the staging queue. */
-async function countPendingStagingRows(): Promise<number> {
+/**
+ * Count rows still being worked in the staging queue. The processor job drains
+ * the whole queue on its own, so completion is detected here (pending +
+ * processing both zero) rather than by waiting on a long-lived execution.
+ */
+async function getStagingActivity(): Promise<{ pending: number; processing: number }> {
   const bq = getBigQueryClient("US");
   const { staging } = getBqTables();
   const [rows] = await bq.query({
-    query: `SELECT COUNT(*) AS count FROM \`${staging}\` WHERE status = 'pending'`,
+    query: `SELECT
+      COUNTIF(status = 'pending') AS pending,
+      COUNTIF(status = 'processing') AS processing
+      FROM \`${staging}\``,
   });
-  return Number((rows[0] as { count?: unknown })?.count ?? 0);
+  const r = (rows[0] as { pending?: unknown; processing?: unknown }) ?? {};
+  return { pending: Number(r.pending ?? 0), processing: Number(r.processing ?? 0) };
 }
 
 let downloadJob: {
@@ -1027,11 +1027,40 @@ let downloadJob: {
   error?: string;
 } = { status: "idle", step: "" };
 
-router.get("/bq/download-job-status", (_req, res) => {
+/**
+ * Resolve the download drain's terminal state from the authoritative staging
+ * queue. The processor job drains the queue on its own, so rather than keeping a
+ * fragile multi-hour background wait alive, we mark the in-memory job
+ * `completed` once nothing is left pending or processing. Called both by the
+ * status endpoint (so the UI sees completion) AND by every endpoint that gates
+ * on `downloadJob.status === "running"`, so the lock can never get stuck
+ * "running" just because nothing happened to poll the status route.
+ */
+async function reconcileDownloadJob(): Promise<void> {
+  if (downloadJob.status !== "running" || downloadJob.step !== "processor-running") {
+    return;
+  }
+  try {
+    const { pending, processing } = await getStagingActivity();
+    if (pending === 0 && processing === 0) {
+      downloadJob.status = "completed";
+      downloadJob.step = "done";
+      downloadJob.completedAt = new Date().toISOString();
+      console.log("[run-job] Staging queue fully drained — download pipeline completed");
+    }
+  } catch (err: any) {
+    // Transient BigQuery hiccup: keep reporting "running" and try again next call.
+    console.error("[download-job-status] could not read staging activity:", err.message);
+  }
+}
+
+router.get("/bq/download-job-status", async (_req, res) => {
+  await reconcileDownloadJob();
   res.json(downloadJob);
 });
 
 router.post("/bq/run-job", async (_req, res) => {
+  await reconcileDownloadJob();
   if (downloadJob.status === "running") {
     res.status(409).json({ error: "Download pipeline is already running", step: downloadJob.step });
     return;
@@ -1060,57 +1089,17 @@ router.post("/bq/run-job", async (_req, res) => {
       }
       console.log("[run-job] Loader completed successfully");
 
-      // Step 2: Drain the staging queue. The processor only downloads up to
-      // BATCH_LIMIT recordings per execution, so for large lists we re-trigger
-      // it until nothing is left pending. We judge progress by the pending count
-      // dropping — NOT by the execution's exit status — because the processor
-      // exits non-zero when individual recordings fail even though it made
-      // progress on the rest.
-      let pass = 0;
-      let remaining = await countPendingStagingRows();
-      console.log(`[run-job] ${remaining} recording(s) pending after loader`);
-
-      while (remaining > 0) {
-        pass++;
-        if (pass > MAX_PROCESSOR_PASSES) {
-          throw new Error(
-            `Reached the max of ${MAX_PROCESSOR_PASSES} processor passes with ${remaining} still pending — stopping to avoid an infinite loop. Run Download again to continue.`,
-          );
-        }
-
-        downloadJob.step = `processor-running (pass ${pass}, ${remaining} pending)`;
-        console.log(`[run-job] Processor pass ${pass}: ${remaining} pending — triggering processor`);
-        const processorResult = await triggerInContactCloudRunJob("incontact-call-processor");
-        downloadJob.processorExecution = processorResult.executionName;
-        console.log("[run-job] Processor triggered:", processorResult.executionName);
-
-        const processorStatus = await waitForExecution(processorResult.executionName, PROCESSOR_WAIT_MS);
-
-        const before = remaining;
-        remaining = await countPendingStagingRows();
-        console.log(
-          `[run-job] Pass ${pass} done (execution succeeded=${processorStatus.succeeded}); pending ${before} → ${remaining}`,
-        );
-
-        if (remaining === 0) break;
-
-        if (remaining >= before) {
-          // No forward progress: the remaining rows can't be drained (the
-          // processor couldn't start, timed out, or every remaining call
-          // errored). Stop instead of looping forever.
-          throw new Error(
-            `Processor made no progress (${remaining} still pending)` +
-              (processorStatus.error ? `: ${processorStatus.error}` : "") +
-              ". Stopping — check the staging queue / processor logs, then run Download again.",
-          );
-        }
-      }
-
-      downloadJob.status = "completed";
-      downloadJob.step =
-        pass > 0 ? `done (${pass} processor pass${pass === 1 ? "" : "es"})` : "done (nothing to download)";
-      downloadJob.completedAt = new Date().toISOString();
-      console.log("[run-job] Download pipeline completed");
+      // Step 2: Trigger the processor ONCE. The processor job now drains the
+      // entire staging queue on its own (no BATCH_LIMIT; 24h task timeout; Cloud
+      // Run retries it on interruption), so there's no multi-pass loop here and
+      // no long-lived background wait — both were unreliable on Cloud Run for a
+      // drain that can take many hours. Completion is detected lazily from the
+      // staging queue in GET /bq/download-job-status.
+      downloadJob.step = "processor-running";
+      console.log("[run-job] Step 2: Triggering processor to drain the staging queue");
+      const processorResult = await triggerInContactCloudRunJob("incontact-call-processor");
+      downloadJob.processorExecution = processorResult.executionName;
+      console.log("[run-job] Processor triggered (autonomous drain):", processorResult.executionName);
     } catch (err: any) {
       downloadJob.status = "failed";
       downloadJob.error = err.message;
@@ -1342,6 +1331,8 @@ router.post("/bq/queue-recordings/adhoc/run", async (req, res) => {
     const callListPath = `call_list/${batchId}.txt`;
     const { bucket } = getBqTables();
 
+    // Resolve any stale daily-download lock from the queue before gating on it.
+    await reconcileDownloadJob();
     // Acquire lock synchronously (no awaits between check and set) to close race window.
     if (adhocDownloadJob.status === "running") {
       res.status(409).json({ error: "Ad-hoc download is already running", step: adhocDownloadJob.step });
@@ -1532,6 +1523,7 @@ router.post("/bq/adhoc-reset-stale", async (req, res) => {
     const { batchId } = BatchIdSchema.parse(req.body);
     // Refuse to reset while a download job is actively writing to staging —
     // otherwise we'd flip rows out from under a live processor.
+    await reconcileDownloadJob();
     if (adhocDownloadJob.status === "running") {
       res.status(409).json({ error: "Ad-hoc download is running — wait or cancel before resetting" });
       return;
@@ -1573,6 +1565,7 @@ router.post("/bq/adhoc-resume", async (req, res) => {
     const { batchId } = BatchIdSchema.parse(req.body);
     const { staging, bucket } = getBqTables();
 
+    await reconcileDownloadJob();
     if (adhocDownloadJob.status === "running") {
       res.status(409).json({ error: "Ad-hoc download is already running", step: adhocDownloadJob.step });
       return;

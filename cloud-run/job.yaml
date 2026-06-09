@@ -20,5 +20,5 @@ spec:
                 limits:
                   cpu: "1"
                   memory: 512Mi
-          timeoutSeconds: 7200
-          maxRetries: 1
+          timeoutSeconds: 86400
+          maxRetries: 3

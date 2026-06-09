@@ -1,1 +1,1 @@
-- [InContact download pipeline](incontact-download-pipeline.md) — recording processor exits non-zero on any failed call, so re-trigger logic must judge progress by the staging `pending` count, not exit status.
+- [InContact download pipeline](incontact-download-pipeline.md) — daily recording drain is self-draining inside the Cloud Run processor (no batch cap, exit 0 when queue empty); api-server triggers it once and reconciles the lock from staging queue state.
