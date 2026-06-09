@@ -1,1 +1,1 @@
-- [InContact download pipeline](incontact-download-pipeline.md) — daily recording drain is self-draining inside the Cloud Run processor (no batch cap, exit 0 when queue empty); api-server triggers it once and reconciles the lock from staging queue state.
+- [InContact download pipeline](incontact-download-pipeline.md) — daily recording drain self-completes inside the Cloud Run processor, not an api-server loop; why background-promise orchestration was the wrong tool.
