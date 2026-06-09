@@ -1,1 +1,1 @@
-- [InContact download pipeline](incontact-download-pipeline.md) — processor exits non-zero on ANY failed recording; re-trigger logic must judge progress by staging `pending` count, not exit status. BATCH_LIMIT=500/run; dedup via call_recordings join.
+- [InContact download pipeline](incontact-download-pipeline.md) — recording processor exits non-zero on any failed call, so re-trigger logic must judge progress by the staging `pending` count, not exit status.
