@@ -995,6 +995,28 @@ router.get("/bq/transform-agents-status", async (_req, res) => {
   }
 });
 
+/**
+ * Safety cap on how many times the daily download pipeline will re-trigger the
+ * processor in a single run. With BATCH_LIMIT=500 per pass this covers up to
+ * 50k recordings; the stall guard below stops earlier if a pass makes no
+ * progress, so this is just a backstop against an infinite loop.
+ */
+const MAX_PROCESSOR_PASSES = 100;
+/** How long to wait for one processor execution. Matches the job's own 2h task timeout (+buffer) so we never trigger an overlapping run. */
+const PROCESSOR_WAIT_MS = 7_300_000;
+/** Loader job task timeout is 30m; give the wait a small buffer over that. */
+const LOADER_WAIT_MS = 1_900_000;
+
+/** Count rows still waiting to be downloaded in the staging queue. */
+async function countPendingStagingRows(): Promise<number> {
+  const bq = getBigQueryClient("US");
+  const { staging } = getBqTables();
+  const [rows] = await bq.query({
+    query: `SELECT COUNT(*) AS count FROM \`${staging}\` WHERE status = 'pending'`,
+  });
+  return Number((rows[0] as { count?: unknown })?.count ?? 0);
+}
+
 let downloadJob: {
   status: "idle" | "running" | "completed" | "failed";
   step: string;
@@ -1032,27 +1054,61 @@ router.post("/bq/run-job", async (_req, res) => {
       console.log("[run-job] Loader triggered:", loaderResult.executionName);
 
       console.log("[run-job] Waiting for loader to complete...");
-      const loaderStatus = await waitForExecution(loaderResult.executionName);
+      const loaderStatus = await waitForExecution(loaderResult.executionName, LOADER_WAIT_MS);
       if (!loaderStatus.succeeded) {
         throw new Error(`Loader failed: ${loaderStatus.error || "unknown error"}`);
       }
       console.log("[run-job] Loader completed successfully");
 
-      downloadJob.step = "processor-running";
-      console.log("[run-job] Step 2: Triggering processor to download recordings");
-      const processorResult = await triggerInContactCloudRunJob("incontact-call-processor");
-      downloadJob.processorExecution = processorResult.executionName;
-      console.log("[run-job] Processor triggered:", processorResult.executionName);
+      // Step 2: Drain the staging queue. The processor only downloads up to
+      // BATCH_LIMIT recordings per execution, so for large lists we re-trigger
+      // it until nothing is left pending. We judge progress by the pending count
+      // dropping — NOT by the execution's exit status — because the processor
+      // exits non-zero when individual recordings fail even though it made
+      // progress on the rest.
+      let pass = 0;
+      let remaining = await countPendingStagingRows();
+      console.log(`[run-job] ${remaining} recording(s) pending after loader`);
 
-      console.log("[run-job] Waiting for processor to complete...");
-      const processorStatus = await waitForExecution(processorResult.executionName);
-      if (!processorStatus.succeeded) {
-        throw new Error(`Processor failed: ${processorStatus.error || "unknown error"}`);
+      while (remaining > 0) {
+        pass++;
+        if (pass > MAX_PROCESSOR_PASSES) {
+          throw new Error(
+            `Reached the max of ${MAX_PROCESSOR_PASSES} processor passes with ${remaining} still pending — stopping to avoid an infinite loop. Run Download again to continue.`,
+          );
+        }
+
+        downloadJob.step = `processor-running (pass ${pass}, ${remaining} pending)`;
+        console.log(`[run-job] Processor pass ${pass}: ${remaining} pending — triggering processor`);
+        const processorResult = await triggerInContactCloudRunJob("incontact-call-processor");
+        downloadJob.processorExecution = processorResult.executionName;
+        console.log("[run-job] Processor triggered:", processorResult.executionName);
+
+        const processorStatus = await waitForExecution(processorResult.executionName, PROCESSOR_WAIT_MS);
+
+        const before = remaining;
+        remaining = await countPendingStagingRows();
+        console.log(
+          `[run-job] Pass ${pass} done (execution succeeded=${processorStatus.succeeded}); pending ${before} → ${remaining}`,
+        );
+
+        if (remaining === 0) break;
+
+        if (remaining >= before) {
+          // No forward progress: the remaining rows can't be drained (the
+          // processor couldn't start, timed out, or every remaining call
+          // errored). Stop instead of looping forever.
+          throw new Error(
+            `Processor made no progress (${remaining} still pending)` +
+              (processorStatus.error ? `: ${processorStatus.error}` : "") +
+              ". Stopping — check the staging queue / processor logs, then run Download again.",
+          );
+        }
       }
-      console.log("[run-job] Processor completed successfully");
 
       downloadJob.status = "completed";
-      downloadJob.step = "done";
+      downloadJob.step =
+        pass > 0 ? `done (${pass} processor pass${pass === 1 ? "" : "es"})` : "done (nothing to download)";
       downloadJob.completedAt = new Date().toISOString();
       console.log("[run-job] Download pipeline completed");
     } catch (err: any) {
