@@ -1,1 +1,2 @@
 - [InContact download pipeline](incontact-download-pipeline.md) — daily recording drain self-completes inside the Cloud Run processor, not an api-server loop; why background-promise orchestration was the wrong tool.
+- [GitHub connection on Replit](github-connection.md) — workspace Git connection vs `listConnections('github')` connector disagree; recovery steps, PAT fallback, workflow-scope caveat, stale `.git/*.lock`.
