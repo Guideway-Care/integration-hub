@@ -22,6 +22,13 @@ cap), and is given a long task-timeout plus retries so one execution can finish 
 interrupted one resumes. The api-server triggers the loader, triggers the processor
 once, and then just observes the queue.
 
+**Guardrail — do not shrink the processor's Cloud Run task-timeout.** The drain is
+sequential at only ~300 recordings/hour, so a multi-thousand backlog needs a many-hour
+single run. An earlier 2-hour task-timeout made every execution die on the time limit
+(each showed failed=1) before the queue drained — the exact "runs too long, fails,
+stops" failure. The timeout must stay comfortably above worst-case full-drain time, or
+that regression returns.
+
 **Edge case to preserve:** a fully-drained run must succeed (exit 0) even when some
 individual recordings failed — failed rows stay in a `failed` state for separate
 retry. Do NOT make per-recording failures fail the whole execution; that only causes a
