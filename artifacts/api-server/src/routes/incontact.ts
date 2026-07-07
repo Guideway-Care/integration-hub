@@ -453,6 +453,31 @@ router.post("/incontact/sync-dispositions", async (_req, res) => {
   }
 });
 
+router.get("/incontact/dispositions-stats", async (_req, res) => {
+  try {
+    const bq = getBigQueryClient();
+    const [rows] = await bq.query({
+      query: `SELECT
+                COUNT(*) AS total,
+                COUNTIF(is_active) AS active,
+                COUNTIF(NOT is_active) AS inactive,
+                FORMAT_TIMESTAMP('%Y-%m-%dT%H:%M:%SZ', MAX(TIMESTAMP_MILLIS(last_updated))) AS newest_last_updated
+              FROM \`incontact.dispositions\``,
+      location: "US",
+    });
+    const r = (rows[0] ?? {}) as any;
+    res.json({
+      total: Number(r.total ?? 0),
+      active: Number(r.active ?? 0),
+      inactive: Number(r.inactive ?? 0),
+      newestLastUpdated: r.newest_last_updated ?? null,
+    });
+  } catch (err: any) {
+    console.error("[incontact/dispositions-stats]", err.message);
+    res.status(500).json({ error: err.message || "Failed to load disposition stats" });
+  }
+});
+
 router.post("/incontact/seed-agents-endpoint", async (_req, res) => {
   try {
     const SOURCE_SYSTEM_ID = "nice-cxone";

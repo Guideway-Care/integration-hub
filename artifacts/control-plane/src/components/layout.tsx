@@ -13,6 +13,7 @@ import {
   Headphones,
   ExternalLink,
   Play,
+  RefreshCw,
 } from "lucide-react";
 import { useState } from "react";
 import type { LucideIcon } from "lucide-react";
@@ -57,6 +58,7 @@ const navSections: NavSection[] = [
     label: "Tools",
     items: [
       { label: "API Explorer", href: "/incontact?tab=api-explorer", icon: Plug },
+      { label: "Disposition Refresh", href: "/disposition-refresh", icon: RefreshCw },
       { label: "Scripts", href: "/scripts", icon: Settings },
     ],
   },

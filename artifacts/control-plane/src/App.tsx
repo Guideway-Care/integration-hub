@@ -12,6 +12,7 @@ import AgentsPage from "@/pages/agents";
 import RecordingsPage from "@/pages/recordings";
 import AuditPage from "@/pages/audit";
 import ScriptsPage from "@/pages/scripts";
+import DispositionRefreshPage from "@/pages/disposition-refresh";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient({
@@ -36,6 +37,7 @@ function Router() {
         <Route path="/recordings" component={RecordingsPage} />
         <Route path="/audit" component={AuditPage} />
         <Route path="/scripts" component={ScriptsPage} />
+        <Route path="/disposition-refresh" component={DispositionRefreshPage} />
         <Route component={NotFound} />
       </Switch>
     </Layout>
