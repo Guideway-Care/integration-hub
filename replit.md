@@ -61,6 +61,8 @@ Operational console for the NICE/InContact extraction pipeline, pulling Contacts
 
 ## Gotchas
 
+- **Two separate deploy surfaces**: Replit Publish updates `integration-hub-lisamcdermott.replit.app` only. The Cloud Run control-plane (`control-plane-…-uc.a.run.app`) updates ONLY via GitHub Actions CD on push to `main` of the `github` remote — Replit Publish never touches it. If a user reports missing changes on the `*.a.run.app` URL, check `git log github/main..HEAD` and push (PAT fallback in `.agents/memory/github-connection.md`). Nginx now serves HTML with `Cache-Control: no-cache` and hashed assets as `immutable`, so post-deploy staleness only requires a normal refresh.
+
 - **DB Table Dependency**: Do not drop `extraction_run`, `source_system`, or `endpoint_definition` tables until the InContact daily jobs' state tracking is refactored.
 - **Typechecking**: Always run `pnpm run typecheck` from the root to ensure correct type validation across all composite TypeScript projects.
 - **Daily vs. Ad-hoc Downloads**: Daily and ad-hoc call recording downloads are mutually exclusive due to in-process locks.
