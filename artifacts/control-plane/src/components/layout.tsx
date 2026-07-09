@@ -40,8 +40,8 @@ const navSections: NavSection[] = [
   {
     label: "Extraction",
     items: [
-      { label: "Contacts", href: "/incontact", icon: Phone },
       { label: "Agents", href: "/agents", icon: Users },
+      { label: "Contacts", href: "/incontact", icon: Phone },
       { label: "Recordings", href: "/recordings", icon: FileAudio },
     ],
   },
@@ -57,8 +57,8 @@ const navSections: NavSection[] = [
   {
     label: "Tools",
     items: [
-      { label: "API Explorer", href: "/incontact?tab=api-explorer", icon: Plug },
       { label: "Disposition Refresh", href: "/disposition-refresh", icon: RefreshCw },
+      { label: "API Explorer", href: "/incontact?tab=api-explorer", icon: Plug },
       { label: "Scripts", href: "/scripts", icon: Settings },
     ],
   },
