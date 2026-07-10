@@ -23,6 +23,11 @@ Symptom: Git pane shows "Unknown Git Error", pushes 401, connection "disconnecte
   `git -c credential.helper='!f(){ echo username=x-access-token; printf "password=%s\n" "$GITHUB_PAT"; }; f' push https://github.com/Guideway-Care/integration-hub.git HEAD:main`
 - Always mask tokens in output: pipe through `sed -E 's#x-access-token:[^@]*@#x-access-token:***@#g'`.
 
+## Token PRESENT ≠ token VALID (both creds can be dead at once)
+- A push can fail with `remote: Invalid username or token. Password authentication is not supported for Git operations.` even though `GITHUB_PAT` is set (correct 40-char length) AND `listConnections('github')` returns a `gho_…` token under `settings.oauth.credentials.access_token`. That GitHub message = the token is **expired/revoked**, not malformed.
+- **Why:** the env PAT and the OpenInt connector token expire independently and can both be stale simultaneously; the connector often shows `status:'disconnected'` while still returning a (dead) token, so a non-null token is NOT proof it works.
+- **How to apply:** don't loop retrying either credential. Recovery is user-side and required: (a) reconnect GitHub in Replit (Git pane → Settings → Connections → disconnect + reconnect, let the OAuth popup fully complete), or (b) provide a fresh `GITHUB_PAT` (scopes `repo`,`workflow`). Then re-run the explicit-URL push above.
+
 ## workflow scope caveat
 - The Replit OAuth authorize screen does not clearly grant the `workflow` scope. Pushes touching `.github/workflows/*` via the Git pane may be silently dropped — use the PAT for those (PAT has `workflow`). Normal code pushes are fine.
 
