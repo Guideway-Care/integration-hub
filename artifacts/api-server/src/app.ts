@@ -5,6 +5,7 @@ import router from "./routes";
 import { logger } from "./lib/logger";
 import { errorHandler } from "./middlewares/error-handler";
 import { syncSimpleSchedulerJob, getGcpCredentials } from "./services/cloud-run";
+import { DAILY_JOBS } from "./config/daily-jobs";
 
 void (async () => {
   try {
@@ -30,13 +31,16 @@ void (async () => {
 
   try {
     const result = await syncSimpleSchedulerJob({
-      jobName: "incontact-agents-daily",
-      schedule: "0 6 * * *",
-      timeZone: "America/Chicago",
-      path: "/api/incontact/agents-daily-job",
+      jobName: DAILY_JOBS.agents.schedulerJobName,
+      schedule: DAILY_JOBS.agents.schedule,
+      timeZone: DAILY_JOBS.agents.timeZone,
+      path: DAILY_JOBS.agents.path,
       body: { trigger: "scheduled" },
     });
-    logger.info({ result }, "[startup] Synced incontact-agents-daily Cloud Scheduler job");
+    logger.info(
+      { result, triggerUrl: result.triggerUrl },
+      "[startup] Synced incontact-agents-daily Cloud Scheduler job",
+    );
   } catch (err: any) {
     logger.error(
       { err: err.message },
@@ -46,13 +50,16 @@ void (async () => {
 
   try {
     const result = await syncSimpleSchedulerJob({
-      jobName: "incontact-contacts-daily",
-      schedule: "30 6 * * *",
-      timeZone: "America/Chicago",
-      path: "/api/incontact/contacts-daily-job",
+      jobName: DAILY_JOBS.contacts.schedulerJobName,
+      schedule: DAILY_JOBS.contacts.schedule,
+      timeZone: DAILY_JOBS.contacts.timeZone,
+      path: DAILY_JOBS.contacts.path,
       body: { trigger: "scheduled" },
     });
-    logger.info({ result }, "[startup] Synced incontact-contacts-daily Cloud Scheduler job");
+    logger.info(
+      { result, triggerUrl: result.triggerUrl },
+      "[startup] Synced incontact-contacts-daily Cloud Scheduler job",
+    );
   } catch (err: any) {
     logger.error(
       { err: err.message },

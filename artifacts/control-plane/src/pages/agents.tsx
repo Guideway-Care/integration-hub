@@ -20,6 +20,7 @@ import {
   Database,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { ScheduleIndicator } from "@/components/scheduled-jobs";
 
 interface AgentPerformance {
   agentId: string;
@@ -383,6 +384,9 @@ export default function AgentsPage() {
           <p className="text-sm text-muted-foreground mt-1">
             Retrieve and analyze agent performance metrics from NICE CXone
           </p>
+          <div className="mt-2">
+            <ScheduleIndicator jobName="agents-daily" />
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <button

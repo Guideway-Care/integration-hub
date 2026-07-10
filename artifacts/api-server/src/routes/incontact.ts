@@ -7,8 +7,10 @@ import {
   endpointDefinitionTable,
   endpointParameterTable,
   extractionRunTable,
+  scheduledJobRunTable,
 } from "@workspace/db/schema";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, gte, and } from "drizzle-orm";
+import { DAILY_JOBS, DAILY_JOBS_LIST } from "../config/daily-jobs";
 
 interface EndpointParam {
   name: string;
@@ -762,6 +764,65 @@ function getYesterdayInChicago(): string {
   return `${yy}-${mm}-${dd}`;
 }
 
+function getTodayInChicago(): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Chicago",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
+/**
+ * Records the start of a scheduled/daily job run and returns the row id so the
+ * caller can finalize it. DB failures are swallowed (logged only) so that
+ * persistence problems never break the actual extraction/transform work.
+ */
+async function startScheduledRunRecord(
+  jobName: string,
+  runDate: string,
+  trigger: "manual" | "scheduled",
+): Promise<string | null> {
+  try {
+    const [row] = await db
+      .insert(scheduledJobRunTable)
+      .values({ jobName, runDate, trigger, status: "running", phase: "extract", startedAt: new Date() })
+      .returning({ id: scheduledJobRunTable.id });
+    return row?.id ?? null;
+  } catch (err: any) {
+    console.error(`[scheduled-run] Failed to record start for ${jobName} ${runDate}:`, err.message);
+    return null;
+  }
+}
+
+async function finishScheduledRunRecord(
+  id: string | null,
+  patch: {
+    status: "completed" | "failed";
+    phase?: string;
+    durationMs?: number;
+    error?: string;
+    detail?: Record<string, unknown>;
+  },
+): Promise<void> {
+  if (!id) return;
+  try {
+    await db
+      .update(scheduledJobRunTable)
+      .set({
+        status: patch.status,
+        phase: patch.phase,
+        durationMs: patch.durationMs,
+        error: patch.error,
+        detailJson: patch.detail ?? null,
+        completedAt: new Date(),
+      })
+      .where(eq(scheduledJobRunTable.id, id));
+  } catch (err: any) {
+    console.error(`[scheduled-run] Failed to record completion for ${id}:`, err.message);
+  }
+}
+
 async function verifyGoogleOidcToken(req: any): Promise<{ ok: true; email: string } | { ok: false; reason: string }> {
   const auth = req.headers.authorization;
   if (typeof auth !== "string" || !auth.startsWith("Bearer ")) {
@@ -830,6 +891,7 @@ async function runAgentsScheduledJob(date: string, trigger: "manual" | "schedule
     startedAt: new Date().toISOString(),
     trigger,
   };
+  const recordId = await startScheduledRunRecord(DAILY_JOBS.agents.jobName, date, trigger);
   try {
     await runAgentsDailyExtraction(date, date);
     if (agentsDailyJob.status !== "completed") {
@@ -859,6 +921,11 @@ async function runAgentsScheduledJob(date: string, trigger: "manual" | "schedule
       completedAt: new Date().toISOString(),
       durationMs: Date.now() - startTs,
     };
+    await finishScheduledRunRecord(recordId, {
+      status: "completed",
+      phase: "done",
+      durationMs: Date.now() - startTs,
+    });
     console.log(`[agents-scheduled] Completed for ${date} in ${Math.round((Date.now() - startTs) / 1000)}s`);
   } catch (err: any) {
     agentsScheduledJob = {
@@ -868,6 +935,12 @@ async function runAgentsScheduledJob(date: string, trigger: "manual" | "schedule
       completedAt: new Date().toISOString(),
       durationMs: Date.now() - startTs,
     };
+    await finishScheduledRunRecord(recordId, {
+      status: "failed",
+      phase: agentsScheduledJob.phase,
+      durationMs: Date.now() - startTs,
+      error: err.message,
+    });
     console.error(`[agents-scheduled] Failed for ${date}:`, err.message);
   }
 }
@@ -1062,6 +1135,7 @@ async function runContactsScheduledJob(date: string, trigger: "manual" | "schedu
     startedAt: new Date().toISOString(),
     trigger,
   };
+  const recordId = await startScheduledRunRecord(DAILY_JOBS.contacts.jobName, date, trigger);
   try {
     // Phase 1: Extract
     await runContactsDailyExtraction(date, date);
@@ -1104,6 +1178,17 @@ async function runContactsScheduledJob(date: string, trigger: "manual" | "schedu
         completedAt: new Date().toISOString(),
         durationMs: Date.now() - startTs,
       };
+      await finishScheduledRunRecord(recordId, {
+        status: "completed",
+        phase: "done",
+        durationMs: Date.now() - startTs,
+        detail: {
+          queuedCount: 0,
+          rulesUsed: contactsScheduledJob.rulesUsed,
+          usedFallback: contactsScheduledJob.usedFallback,
+          note: "no new recordings to download",
+        },
+      });
       console.log(`[contacts-scheduled] Completed for ${date} — no new recordings to download`);
       return;
     }
@@ -1137,6 +1222,16 @@ async function runContactsScheduledJob(date: string, trigger: "manual" | "schedu
       completedAt: new Date().toISOString(),
       durationMs: Date.now() - startTs,
     };
+    await finishScheduledRunRecord(recordId, {
+      status: "completed",
+      phase: "done",
+      durationMs: Date.now() - startTs,
+      detail: {
+        queuedCount: contactsScheduledJob.queuedCount,
+        rulesUsed: contactsScheduledJob.rulesUsed,
+        usedFallback: contactsScheduledJob.usedFallback,
+      },
+    });
     console.log(`[contacts-scheduled] Completed for ${date} in ${Math.round((Date.now() - startTs) / 1000)}s`);
   } catch (err: any) {
     contactsScheduledJob = {
@@ -1146,6 +1241,17 @@ async function runContactsScheduledJob(date: string, trigger: "manual" | "schedu
       completedAt: new Date().toISOString(),
       durationMs: Date.now() - startTs,
     };
+    await finishScheduledRunRecord(recordId, {
+      status: "failed",
+      phase: contactsScheduledJob.phase,
+      durationMs: Date.now() - startTs,
+      error: err.message,
+      detail: {
+        queuedCount: contactsScheduledJob.queuedCount,
+        rulesUsed: contactsScheduledJob.rulesUsed,
+        usedFallback: contactsScheduledJob.usedFallback,
+      },
+    });
     console.error(`[contacts-scheduled] Failed for ${date}:`, err.message);
   }
 }
@@ -1180,6 +1286,80 @@ router.post("/incontact/contacts-daily-job", async (req, res) => {
 
 router.get("/incontact/contacts-daily-job/status", async (_req, res) => {
   res.json({ data: contactsScheduledJob, yesterdayChicago: getYesterdayInChicago() });
+});
+
+// A run still marked "running" after this long is almost certainly a process that
+// died mid-job (in-memory state was lost on restart) — surface it as stale.
+const SCHEDULED_RUN_STALE_MS = 2 * 60 * 60 * 1000;
+
+router.get("/incontact/scheduled-jobs/history", async (req, res) => {
+  const days = Math.min(Math.max(parseInt(String(req.query.days ?? "3"), 10) || 3, 1), 30);
+  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const now = Date.now();
+
+  const schedules = DAILY_JOBS_LIST.map((j) => ({
+    jobName: j.jobName,
+    humanLabel: j.humanLabel,
+    description: j.description,
+    schedule: j.schedule,
+    timeZone: j.timeZone,
+  }));
+
+  const current: Record<string, unknown> = {
+    [DAILY_JOBS.agents.jobName]: getAgentsScheduledJob(),
+    [DAILY_JOBS.contacts.jobName]: getContactsScheduledJob(),
+  };
+
+  const jobs: Record<string, { runs: any[]; current: unknown }> = {};
+  for (const j of DAILY_JOBS_LIST) {
+    jobs[j.jobName] = { runs: [], current: current[j.jobName] };
+  }
+
+  let historyAvailable = true;
+  try {
+    const rows = await db
+      .select()
+      .from(scheduledJobRunTable)
+      .where(gte(scheduledJobRunTable.createdTs, cutoff))
+      .orderBy(desc(scheduledJobRunTable.createdTs));
+
+    for (const row of rows) {
+      const bucket = jobs[row.jobName];
+      if (!bucket) continue;
+      const startedMs = row.startedAt ? new Date(row.startedAt).getTime() : null;
+      const stale =
+        row.status === "running" && startedMs != null && now - startedMs > SCHEDULED_RUN_STALE_MS;
+      bucket.runs.push({
+        id: row.id,
+        jobName: row.jobName,
+        runDate: row.runDate,
+        trigger: row.trigger,
+        status: row.status,
+        phase: row.phase,
+        startedAt: row.startedAt,
+        completedAt: row.completedAt,
+        durationMs: row.durationMs,
+        error: row.error,
+        detail: row.detailJson,
+        createdTs: row.createdTs,
+        stale,
+      });
+    }
+  } catch (err: any) {
+    // Table may not be migrated yet (cold start / pre-migration deploy). Degrade
+    // gracefully so the dashboard renders the schedule with an empty history.
+    historyAvailable = false;
+    console.error("[scheduled-jobs/history] query failed:", err.message);
+  }
+
+  res.json({
+    schedules,
+    jobs,
+    days,
+    historyAvailable,
+    nowChicago: getTodayInChicago(),
+    yesterdayChicago: getYesterdayInChicago(),
+  });
 });
 
 export default router;

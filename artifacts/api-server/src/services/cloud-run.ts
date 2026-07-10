@@ -148,6 +148,7 @@ export interface SimpleSchedulerJobSpec {
 export async function syncSimpleSchedulerJob(spec: SimpleSchedulerJobSpec): Promise<{
   schedulerJobName: string;
   action: "created" | "updated" | "skipped-dev";
+  triggerUrl: string;
 }> {
   const { projectId, region } = getGcpConfig();
   const apiServerUrl = process.env.API_SERVER_URL || `https://api-server-${projectId}.${region}.run.app`;
@@ -155,7 +156,7 @@ export async function syncSimpleSchedulerJob(spec: SimpleSchedulerJobSpec): Prom
 
   if (process.env.NODE_ENV === "development") {
     console.log(`[Cloud Scheduler] (dev) Would sync job: ${spec.jobName} schedule="${spec.schedule}" tz=${spec.timeZone} → ${triggerUrl}`);
-    return { schedulerJobName: spec.jobName, action: "skipped-dev" };
+    return { schedulerJobName: spec.jobName, action: "skipped-dev", triggerUrl };
   }
 
   const { CloudSchedulerClient } = await import("@google-cloud/scheduler" as string).catch(() => {
@@ -184,12 +185,12 @@ export async function syncSimpleSchedulerJob(spec: SimpleSchedulerJobSpec): Prom
   try {
     await client.getJob({ name: jobPath });
     await client.updateJob({ job: jobBody });
-    return { schedulerJobName: spec.jobName, action: "updated" };
+    return { schedulerJobName: spec.jobName, action: "updated", triggerUrl };
   } catch (err: any) {
     if (err.code === 5) {
       try {
         await client.createJob({ parent, job: jobBody });
-        return { schedulerJobName: spec.jobName, action: "created" };
+        return { schedulerJobName: spec.jobName, action: "created", triggerUrl };
       } catch (createErr: any) {
         if (createErr.code === 7) {
           throw new Error(

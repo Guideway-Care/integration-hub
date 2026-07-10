@@ -5,3 +5,4 @@ export * from "./extraction-run";
 export * from "./extraction-event";
 export * from "./audit-log";
 export * from "./recording-filter-rule";
+export * from "./scheduled-job-run";

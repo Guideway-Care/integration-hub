@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ContactCalendar, type DailyCount } from "@/components/contact-calendar";
+import { AutomatedDailyJobsCard } from "@/components/scheduled-jobs";
 
 interface DashboardData {
   sourceSystems: { total: number; active: number };
@@ -187,6 +188,8 @@ export default function DashboardPage() {
           Refresh
         </button>
       </div>
+
+      <AutomatedDailyJobsCard />
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <StatCard
