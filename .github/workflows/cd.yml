@@ -97,13 +97,14 @@ jobs:
             sleep 1
           done
 
-      - name: Push schema to Cloud SQL
+      - name: Migrate & verify Cloud SQL schema
         env:
           PROD_DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
+          set -o pipefail
           # The prod DATABASE_URL targets the Cloud Run unix socket
-          # (?host=/cloudsql/...). For drizzle-kit running on the GH runner,
-          # we rebuild the URL pointing at the local proxy on 127.0.0.1:5432.
+          # (?host=/cloudsql/...). For tools running on the GH runner we
+          # rebuild the URL pointing at the local proxy on 127.0.0.1:5432.
           # Anchor each capture to a unique delimiter:
           #   USER  = chars between `://` and the first `:`
           #   PW    = chars between that `:` and `@`
@@ -119,12 +120,107 @@ jobs:
             exit 1
           fi
           echo "Parsed user=$DB_USER db=$DB_NAME (pw redacted)"
-          export DATABASE_URL="postgresql://${DB_USER}:${DB_PW}@127.0.0.1:5432/${DB_NAME}"
-          # --force skips interactive prompts. Drizzle will still print the
-          # statements it intends to run; review the CD log if anything looks
-          # destructive (column drops, type narrowing). Add a manual approval
-          # gate here if you want belt-and-suspenders safety later.
-          pnpm --filter @workspace/db run push-force
+          # psql + drizzle both connect via the rebuilt URI. Use the URI form
+          # (not PGPASSWORD) so a percent-encoded password decodes identically
+          # to how drizzle-kit parses it.
+          PSQL_URI="postgresql://${DB_USER}:${DB_PW}@127.0.0.1:5432/${DB_NAME}"
+
+          echo "::group::Guarded idempotent SQL (constraint + scheduled_job_run)"
+          # `drizzle-kit push --force` does NOT auto-answer the interactive
+          # "add unique constraint -> truncate?" SELECT prompt; on this non-TTY
+          # runner it EOF-aborts and applies NOTHING (a silent no-op that still
+          # exits 0). We apply the one blocking constraint deterministically
+          # here (additive, no truncation, fails loudly on real duplicates) and
+          # ensure the append-only scheduled_job_run table exists, so the plain
+          # push below has zero data-loss statements to prompt about.
+          psql "$PSQL_URI" -v ON_ERROR_STOP=1 <<'SQL'
+          -- 1) Refuse to proceed if real duplicates exist (never truncate).
+          DO $$
+          DECLARE dup_groups integer;
+          BEGIN
+            SELECT count(*) INTO dup_groups FROM (
+              SELECT 1 FROM endpoint_parameter
+              GROUP BY endpoint_id, parameter_name HAVING count(*) > 1
+            ) d;
+            IF dup_groups > 0 THEN
+              RAISE EXCEPTION 'endpoint_parameter has % duplicate (endpoint_id, parameter_name) group(s); dedupe before adding uq_endpoint_parameter_name.', dup_groups;
+            END IF;
+          END $$;
+          -- 2) Add the unique constraint if missing (additive, no truncation).
+          DO $$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_endpoint_parameter_name') THEN
+              ALTER TABLE endpoint_parameter
+                ADD CONSTRAINT uq_endpoint_parameter_name UNIQUE (endpoint_id, parameter_name);
+            END IF;
+          END $$;
+          -- 3) Ensure scheduled_job_run exists; columns/types/indexes match
+          --    lib/db/src/schema/scheduled-job-run.ts exactly so push sees no diff.
+          CREATE TABLE IF NOT EXISTS scheduled_job_run (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+            job_name text NOT NULL,
+            run_date text NOT NULL,
+            trigger text NOT NULL,
+            status text NOT NULL,
+            phase text,
+            started_at timestamptz,
+            completed_at timestamptz,
+            duration_ms integer,
+            error text,
+            detail_json jsonb,
+            created_ts timestamptz NOT NULL DEFAULT now()
+          );
+          CREATE INDEX IF NOT EXISTS idx_scheduled_run_job_created ON scheduled_job_run (job_name, created_ts);
+          CREATE INDEX IF NOT EXISTS idx_scheduled_run_job_date ON scheduled_job_run (job_name, run_date);
+          SQL
+          echo "::endgroup::"
+
+          echo "::group::Prod schema drift report (read-only)"
+          # Our only window into prod drift from CI. Review before trusting push.
+          psql "$PSQL_URI" -v ON_ERROR_STOP=1 <<'SQL'
+          \echo '--- columns (public) ---'
+          SELECT table_name, column_name, data_type, is_nullable, column_default
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+          ORDER BY table_name, ordinal_position;
+          \echo '--- constraints (public) ---'
+          SELECT conrelid::regclass AS tbl, conname, pg_get_constraintdef(oid) AS def
+          FROM pg_constraint
+          WHERE connamespace = 'public'::regnamespace
+          ORDER BY 1, 2;
+          \echo '--- indexes (public) ---'
+          SELECT tablename, indexname
+          FROM pg_indexes WHERE schemaname = 'public'
+          ORDER BY 1, 2;
+          SQL
+          echo "::endgroup::"
+
+          echo "::group::drizzle-kit push (plain, no --force, stdin closed)"
+          # Plain push (NOT --force): additive changes apply non-interactively.
+          # Any remaining DATA-LOSS statement makes push prompt and, on this
+          # non-TTY runner, EOF-abort WITHOUT applying — caught by the checks
+          # below. This turns accidental destructive drift into a red build
+          # instead of silent data loss or a silent no-op.
+          export DATABASE_URL="$PSQL_URI"
+          pnpm --filter @workspace/db run push </dev/null 2>&1 | tee /tmp/push.log
+          echo "::endgroup::"
+
+          echo "::group::Verify convergence"
+          if grep -qiE "do you want to truncate|you're about to|about to add" /tmp/push.log; then
+            echo "ERROR: drizzle-kit push hit an interactive data-loss prompt (unexpected destructive drift). Failing the build; review the drift report above."
+            exit 1
+          fi
+          if ! grep -qi "Changes applied" /tmp/push.log; then
+            echo "ERROR: drizzle-kit push did not report 'Changes applied' — possible silent no-op."
+            exit 1
+          fi
+          OK=$(psql "$PSQL_URI" -tAc "SELECT (to_regclass('public.scheduled_job_run') IS NOT NULL) AND EXISTS (SELECT 1 FROM pg_constraint WHERE conname='uq_endpoint_parameter_name')")
+          if [ "$OK" != "t" ]; then
+            echo "ERROR: post-migration verification failed (scheduled_job_run and/or uq_endpoint_parameter_name missing)."
+            exit 1
+          fi
+          echo "OK: scheduled_job_run present, uq_endpoint_parameter_name present, push converged."
+          echo "::endgroup::"
 
       - name: Stop Cloud SQL Auth Proxy
         if: always()
