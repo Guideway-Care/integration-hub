@@ -32,6 +32,7 @@ timeoutMs = 20000
 GCP_PROJECT_ID = "guidewaycare-476802"
 GCP_REGION = "us-central1"
 SCHEDULER_SERVICE_ACCOUNT = "api-controller-hub-dev@guidewaycare-476802.iam.gserviceaccount.com"
+API_SERVER_URL = "https://api-server-g3tph2rhoa-uc.a.run.app"
 
 [nix]
 channel = "stable-25_05"

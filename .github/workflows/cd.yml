@@ -247,7 +247,8 @@ jobs:
           flags: >-
             --service-account=api-controller-hub-dev@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com
             --add-cloudsql-instances=${{ vars.CLOUD_SQL_CONNECTION }}
-            --set-env-vars=DATABASE_URL=${{ secrets.DATABASE_URL }},NODE_ENV=production,GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }}
+            --set-env-vars=DATABASE_URL=${{ secrets.DATABASE_URL }},NODE_ENV=production,GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }},API_SERVER_URL=https://api-server-g3tph2rhoa-uc.a.run.app,SCHEDULER_SERVICE_ACCOUNT=api-controller-hub-dev@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+            --no-cpu-throttling
             --min-instances=0
             --max-instances=10
             --memory=512Mi
