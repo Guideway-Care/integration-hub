@@ -997,7 +997,7 @@ router.get("/bq/transform-agents-status", async (_req, res) => {
 });
 
 /** Loader job task timeout is 30m; give the wait a small buffer over that. */
-const LOADER_WAIT_MS = 1_900_000;
+export const LOADER_WAIT_MS = 1_900_000;
 
 /**
  * Count rows still being worked in the staging queue. The processor job drains

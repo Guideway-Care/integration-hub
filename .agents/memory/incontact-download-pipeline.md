@@ -34,16 +34,20 @@ individual recordings failed — failed rows stay in a `failed` state for separa
 retry. Do NOT make per-recording failures fail the whole execution; that only causes a
 pointless retry of an already-drained queue. Genuine fatal errors should still fail.
 
-## Lesson: a big-queue contacts daily run can be marked "failed" cosmetically
+## Lesson: an execution-wait timeout is NOT a pipeline failure
 
 The contacts daily job's download phase awaits the processor execution with a ~10-min
-cap. When the queued backlog is large (e.g. a backfill day with 1500+ recordings), that
-wait times out and the run is recorded `failed` ("Processor failed: Timed out waiting
-for execution to complete") even though contacts data already loaded to BigQuery
-(extract/transform/load finish before download) and the processor keeps draining to
-completion on its own. Judge such runs by BigQuery data + queue drain, not the status
-row. The processor also work-steals queue-globally, so overlapping daily runs' queues
-drain together.
+cap. On big download days (1500+ recordings) that wait used to time out and record the
+run `failed` ("Processor failed: Timed out waiting for execution to complete") even
+though contacts data had already loaded to BigQuery (extract/transform/load finish
+before download) and the processor drains to completion on its own. Fixed (July 2026):
+the daily job now distinguishes `done:false` (wait timed out, processor still running →
+record completed with a "download continuing in background" note) from a genuinely
+failed execution (`done:true, !succeeded` → failed). The loader wait uses the longer
+LOADER_WAIT_MS (~32 min) matching its 30-min task timeout. If a similar await is ever
+added elsewhere, keep that done/succeeded distinction — and judge drains by BigQuery
+data + queue state, not run badges. The processor work-steals queue-globally, so
+overlapping daily runs' queues drain together.
 
 ## Lesson: completion/lock state must come from the queue, not in-memory polling
 

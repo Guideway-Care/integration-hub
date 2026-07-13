@@ -1201,16 +1201,43 @@ async function runContactsScheduledJob(date: string, trigger: "manual" | "schedu
     // We expose a tiny helper through a fetch to our own /bq/run-job? No — run-job is fire-and-forget.
     // Instead, replicate the chain inline using the exported triggers we just imported.
     // (triggerInContactCloudRunJob and waitForExecution aren't exported; we add wrappers below.)
-    const { triggerLoaderJob, triggerProcessorJob, awaitExecution } = cr;
+    const { triggerLoaderJob, triggerProcessorJob, awaitExecution, LOADER_WAIT_MS } = cr;
     const loader = await triggerLoaderJob();
     contactsScheduledJob.loaderExecution = loader.executionName;
-    const loaderStatus = await awaitExecution(loader.executionName);
+    const loaderStatus = await awaitExecution(loader.executionName, LOADER_WAIT_MS);
     if (!loaderStatus.succeeded) {
       throw new Error(`Loader failed: ${loaderStatus.error || "unknown error"}`);
     }
     const processor = await triggerProcessorJob();
     contactsScheduledJob.processorExecution = processor.executionName;
     const processorStatus = await awaitExecution(processor.executionName);
+    if (!processorStatus.done) {
+      // Wait timed out but the processor is still running. The processor drains
+      // the queue to completion on its own (long task-timeout + retries), so a
+      // large download day is NOT a failure — record success with a note.
+      contactsScheduledJob = {
+        ...contactsScheduledJob,
+        status: "completed",
+        phase: "done",
+        completedAt: new Date().toISOString(),
+        durationMs: Date.now() - startTs,
+      };
+      await finishScheduledRunRecord(recordId, {
+        status: "completed",
+        phase: "done",
+        durationMs: Date.now() - startTs,
+        detail: {
+          queuedCount: contactsScheduledJob.queuedCount,
+          rulesUsed: contactsScheduledJob.rulesUsed,
+          usedFallback: contactsScheduledJob.usedFallback,
+          note: "recording download continuing in background (processor still running when status wait ended)",
+        },
+      });
+      console.log(
+        `[contacts-scheduled] Completed for ${date} in ${Math.round((Date.now() - startTs) / 1000)}s — recording download continuing in background`,
+      );
+      return;
+    }
     if (!processorStatus.succeeded) {
       throw new Error(`Processor failed: ${processorStatus.error || "unknown error"}`);
     }
