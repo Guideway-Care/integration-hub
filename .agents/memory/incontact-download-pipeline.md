@@ -34,6 +34,17 @@ individual recordings failed — failed rows stay in a `failed` state for separa
 retry. Do NOT make per-recording failures fail the whole execution; that only causes a
 pointless retry of an already-drained queue. Genuine fatal errors should still fail.
 
+## Lesson: a big-queue contacts daily run can be marked "failed" cosmetically
+
+The contacts daily job's download phase awaits the processor execution with a ~10-min
+cap. When the queued backlog is large (e.g. a backfill day with 1500+ recordings), that
+wait times out and the run is recorded `failed` ("Processor failed: Timed out waiting
+for execution to complete") even though contacts data already loaded to BigQuery
+(extract/transform/load finish before download) and the processor keeps draining to
+completion on its own. Judge such runs by BigQuery data + queue drain, not the status
+row. The processor also work-steals queue-globally, so overlapping daily runs' queues
+drain together.
+
 ## Lesson: completion/lock state must come from the queue, not in-memory polling
 
 Completion is detected by reading the staging queue (nothing pending or processing),
