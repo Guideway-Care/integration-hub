@@ -355,22 +355,20 @@ router.post("/bq/staging-clear", async (_req, res) => {
 });
 
 async function getAccessToken(): Promise<string> {
-  if (process.env.NODE_ENV === "development") {
-    const { google } = await import("googleapis");
-    const auth = new google.auth.GoogleAuth({
-      scopes: ["https://www.googleapis.com/auth/cloud-platform"],
-    });
-    const client = await auth.getClient();
-    const token = await client.getAccessToken();
-    return token.token || "";
-  }
-  const resp = await fetch(
-    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
-    { headers: { "Metadata-Flavor": "Google" } },
-  );
-  if (!resp.ok) throw new Error(`Failed to get access token: ${resp.status}`);
-  const data = await resp.json() as { access_token: string };
-  return data.access_token;
+  // Authenticate via GCP_SERVICE_ACCOUNT_KEY when present (dev/Replit deploys);
+  // falls back to ambient ADC (metadata server) on Cloud Run. See replit.md
+  // gotcha: never construct GoogleAuth without getGcpCredentials() — the
+  // Replit deployment's ambient identity is a roid-… project with no IAM here.
+  const { GoogleAuth } = await import("google-auth-library" as string);
+  const { getGcpCredentials } = await import("../services/cloud-run");
+  const auth = new GoogleAuth({
+    ...getGcpCredentials(),
+    scopes: ["https://www.googleapis.com/auth/cloud-platform"],
+  });
+  const client = await auth.getClient();
+  const { token } = await client.getAccessToken();
+  if (!token) throw new Error("Failed to obtain GCP access token");
+  return token;
 }
 
 export async function triggerLoaderJob(callListPath?: string) {
@@ -384,6 +382,36 @@ export async function triggerProcessorJob() {
 
 export async function awaitExecution(executionName: string, timeoutMs?: number) {
   return waitForExecution(executionName, timeoutMs);
+}
+
+/** True if any incontact-call-processor execution is currently running. */
+export async function hasActiveProcessorExecution(): Promise<boolean> {
+  const projectId = getGcpProjectId();
+  const token = await getAccessToken();
+  const res = await fetch(
+    `https://run.googleapis.com/v2/projects/${projectId}/locations/us-central1/jobs/incontact-call-processor/executions?pageSize=10`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+  if (!res.ok) throw new Error(`Failed to list processor executions: ${res.status}`);
+  const data = (await res.json()) as { executions?: Array<{ completionTime?: string }> };
+  return (data.executions || []).some((ex) => !ex.completionTime);
+}
+
+/** Count queue rows sitting in 'pending' for longer than the given age. */
+export async function countStalePendingRecordings(minAgeMinutes: number): Promise<number> {
+  const bq = getBigQueryClient("US");
+  const { staging } = getBqTables();
+  const [rows] = await bq.query({
+    query: `
+      SELECT COUNT(*) AS n
+      FROM \`${staging}\`
+      WHERE status = 'pending'
+        AND created_at < TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @age MINUTE)
+    `,
+    params: { age: minAgeMinutes },
+    types: { age: "INT64" },
+  });
+  return Number((rows as any[])[0]?.n || 0);
 }
 
 async function triggerInContactCloudRunJob(

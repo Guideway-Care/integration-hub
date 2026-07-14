@@ -5,6 +5,7 @@ import router from "./routes";
 import { logger } from "./lib/logger";
 import { errorHandler } from "./middlewares/error-handler";
 import { syncSimpleSchedulerJob, getGcpCredentials } from "./services/cloud-run";
+import { startSelfHealLoop } from "./services/self-heal";
 import { DAILY_JOBS } from "./config/daily-jobs";
 
 void (async () => {
@@ -66,6 +67,8 @@ void (async () => {
       "[startup] Failed to sync incontact-contacts-daily Cloud Scheduler job — daily extraction WILL NOT FIRE until this is resolved",
     );
   }
+
+  startSelfHealLoop();
 })();
 
 const app: Express = express();

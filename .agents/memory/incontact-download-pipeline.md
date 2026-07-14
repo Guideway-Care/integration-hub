@@ -46,8 +46,32 @@ record completed with a "download continuing in background" note) from a genuine
 failed execution (`done:true, !succeeded` → failed). The loader wait uses the longer
 LOADER_WAIT_MS (~32 min) matching its 30-min task timeout. If a similar await is ever
 added elsewhere, keep that done/succeeded distinction — and judge drains by BigQuery
-data + queue state, not run badges. The processor work-steals queue-globally, so
-overlapping daily runs' queues drain together.
+data + queue state, not run badges. The queue is global, so overlapping daily runs'
+queues drain together.
+
+## Lesson: the processor is a SINGLE-drainer — extra executions add zero throughput
+
+Triggering additional concurrent processor executions does NOT speed up a drain
+(verified July 2026: 3 running executions, rate stayed ~7 recordings/min). The claim
+query is a deterministic `ORDER BY created_at, id LIMIT 1` with no atomic claim in
+BigQuery, so concurrent executions all grab the SAME row and duplicate each other's
+downloads (only ever ~1 row in 'processing'). There is also a startup guard that exits
+if any row is already 'processing'. Never "scale out" the drain by firing extra
+executions — cancel duplicates if any get started. A slow drain is inherent
+(~7/min sequential, NICE API latency); a multi-thousand backlog simply takes many hours.
+
+## Lesson: Cloud Run kills background orchestration on instance shutdown
+
+Even with CPU throttling disabled (`--no-cpu-throttling`, verified live), Cloud Run
+scales instances to zero based on *request* activity — background work after the HTTP
+response does not keep an instance alive. A daily-run orchestration chain (extract →
+loader → processor trigger) was killed ~7 min after the scheduler request returned,
+dropping the loader→processor hand-off: queue sat pending for hours and the run row
+stuck 'running' ("Stalled" badge). Mitigation (July 2026): a self-heal loop in the
+api-server (boot + every 10 min) that (a) marks run rows stuck 'running' >90 min as
+failed with a clear "orchestration interrupted" error, and (b) triggers the processor
+when rows sit 'pending' >15 min with no active processor execution. Any future
+background orchestration must assume it can die at ANY await point.
 
 ## Lesson: completion/lock state must come from the queue, not in-memory polling
 
