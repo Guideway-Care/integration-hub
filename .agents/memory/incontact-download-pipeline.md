@@ -34,6 +34,23 @@ individual recordings failed — failed rows stay in a `failed` state for separa
 retry. Do NOT make per-recording failures fail the whole execution; that only causes a
 pointless retry of an already-drained queue. Genuine fatal errors should still fail.
 
+## Decision: record daily-run success at processor-trigger time, never after awaiting it
+
+**Why:** the run record used to be finalized only after `awaitExecution(processor)`
+returned. On Jul 15 2026 the pipeline succeeded end-to-end, but Cloud Run recycled the
+api-server instance during the ~32-min idle wait, the final status write was lost, and
+the self-heal sweep (running >90 min → failed) marked a fully successful run "failed"
+— a false alarm on the dashboard. Once the processor is triggered, the drain
+self-completes (see above), so the run's data-critical work is already guaranteed.
+
+**How to apply:** persist `completed` (with a "drains inside the processor job" note)
+immediately after triggering the processor; keep only a best-effort watch that
+downgrades to `failed` on a definitive execution failure (`done && !succeeded`). If
+the instance dies mid-watch, the record is already final and the queue watchdog
+backstops a lost drain. Side effect: the in-memory 409 lock releases at trigger time,
+so manual re-runs during an active drain would start a duplicate single-drainer
+execution — don't.
+
 ## Lesson: an execution-wait timeout is NOT a pipeline failure
 
 The contacts daily job's download phase awaits the processor execution with a ~10-min

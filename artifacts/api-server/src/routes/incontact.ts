@@ -1210,38 +1210,14 @@ async function runContactsScheduledJob(date: string, trigger: "manual" | "schedu
     }
     const processor = await triggerProcessorJob();
     contactsScheduledJob.processorExecution = processor.executionName;
-    const processorStatus = await awaitExecution(processor.executionName);
-    if (!processorStatus.done) {
-      // Wait timed out but the processor is still running. The processor drains
-      // the queue to completion on its own (long task-timeout + retries), so a
-      // large download day is NOT a failure — record success with a note.
-      contactsScheduledJob = {
-        ...contactsScheduledJob,
-        status: "completed",
-        phase: "done",
-        completedAt: new Date().toISOString(),
-        durationMs: Date.now() - startTs,
-      };
-      await finishScheduledRunRecord(recordId, {
-        status: "completed",
-        phase: "done",
-        durationMs: Date.now() - startTs,
-        detail: {
-          queuedCount: contactsScheduledJob.queuedCount,
-          rulesUsed: contactsScheduledJob.rulesUsed,
-          usedFallback: contactsScheduledJob.usedFallback,
-          note: "recording download continuing in background (processor still running when status wait ended)",
-        },
-      });
-      console.log(
-        `[contacts-scheduled] Completed for ${date} in ${Math.round((Date.now() - startTs) / 1000)}s — recording download continuing in background`,
-      );
-      return;
-    }
-    if (!processorStatus.succeeded) {
-      throw new Error(`Processor failed: ${processorStatus.error || "unknown error"}`);
-    }
 
+    // Persist success NOW, before waiting on the processor. The processor is a
+    // self-completing Cloud Run job that drains the queue on its own, but this
+    // api-server instance can be recycled at any point while idly awaiting it
+    // (Cloud Run scale-down lost the final status write on Jul 15, 2026 — the
+    // run showed "failed" even though every step succeeded). If the processor
+    // genuinely fails, the best-effort watch below or the self-heal queue
+    // watchdog surfaces it.
     contactsScheduledJob = {
       ...contactsScheduledJob,
       status: "completed",
@@ -1257,9 +1233,42 @@ async function runContactsScheduledJob(date: string, trigger: "manual" | "schedu
         queuedCount: contactsScheduledJob.queuedCount,
         rulesUsed: contactsScheduledJob.rulesUsed,
         usedFallback: contactsScheduledJob.usedFallback,
+        note: "recordings queued and processor triggered; download drains inside the processor job",
       },
     });
-    console.log(`[contacts-scheduled] Completed for ${date} in ${Math.round((Date.now() - startTs) / 1000)}s`);
+    console.log(
+      `[contacts-scheduled] Completed for ${date} in ${Math.round((Date.now() - startTs) / 1000)}s — recording download draining in processor job`,
+    );
+
+    // Best-effort watch: only to flag a definitive processor failure. If this
+    // instance dies mid-wait, the run record above is already final.
+    try {
+      const processorStatus = await awaitExecution(processor.executionName);
+      if (processorStatus.done && !processorStatus.succeeded) {
+        const errMsg = `Processor failed: ${processorStatus.error || "unknown error"}`;
+        contactsScheduledJob = {
+          ...contactsScheduledJob,
+          status: "failed",
+          error: errMsg,
+          completedAt: new Date().toISOString(),
+          durationMs: Date.now() - startTs,
+        };
+        await finishScheduledRunRecord(recordId, {
+          status: "failed",
+          phase: "download",
+          durationMs: Date.now() - startTs,
+          error: errMsg,
+          detail: {
+            queuedCount: contactsScheduledJob.queuedCount,
+            rulesUsed: contactsScheduledJob.rulesUsed,
+            usedFallback: contactsScheduledJob.usedFallback,
+          },
+        });
+        console.error(`[contacts-scheduled] Processor failed after completion was recorded for ${date}: ${errMsg}`);
+      }
+    } catch (watchErr: any) {
+      console.warn(`[contacts-scheduled] Processor watch ended early (instance may be recycling): ${watchErr.message}`);
+    }
   } catch (err: any) {
     contactsScheduledJob = {
       ...contactsScheduledJob,
@@ -1294,6 +1303,10 @@ router.post("/incontact/contacts-daily-job", async (req, res) => {
         return;
       }
     }
+    // Note: this lock releases at processor-trigger time (run is recorded
+    // "completed" while the drain continues inside the processor job), so a
+    // re-trigger during an active drain would start a duplicate single-drainer
+    // processor execution. Avoid manual re-runs while a drain is in flight.
     if (contactsScheduledJob.status === "running") {
       res.status(409).json({
         error: "Contacts daily job already running",

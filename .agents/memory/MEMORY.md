@@ -1,4 +1,4 @@
-- [InContact download pipeline](incontact-download-pipeline.md) — daily recording drain self-completes inside the Cloud Run processor, not an api-server loop; why background-promise orchestration was the wrong tool.
+- [InContact download pipeline](incontact-download-pipeline.md) — recording drain self-completes inside the Cloud Run processor; record run success at processor-trigger, never await it.
 - [GitHub connection on Replit](github-connection.md) — workspace Git connection vs `listConnections('github')` connector disagree; recovery steps, PAT fallback, workflow-scope caveat, stale `.git/*.lock`.
 - [drizzle-kit push in CI](drizzle-push-ci.md) — `push --force` silently no-ops (exit 0) on the add-constraint "truncate?" prompt in non-TTY CI; use guarded SQL + plain push + verify.
 - [audioflow-processor](audioflow-processor.md) — separate transcription job in the same GCP project, not this repo; its Gemini 404 = retired gemini-2.0-flash (2.5-flash works), fix lives in its own codebase.
