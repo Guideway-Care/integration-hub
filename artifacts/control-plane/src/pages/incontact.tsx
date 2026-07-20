@@ -405,6 +405,216 @@ function ScheduledContactsJobPanel() {
   );
 }
 
+interface ContactsBackfillStatus {
+  status: "idle" | "running" | "completed" | "failed";
+  startDate?: string;
+  endDate?: string;
+  totalDays: number;
+  completedDays: number;
+  skippedDays: number;
+  failedDays: number;
+  currentDay?: string;
+  phase: "extract" | "transform" | "done" | "";
+  startedAt?: string;
+  completedAt?: string;
+  error?: string;
+}
+
+interface ContactsBackfillRecord {
+  id: string;
+  status: string;
+  phase: string | null;
+  runDate: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  error: string | null;
+  detail: {
+    startDate?: string;
+    endDate?: string;
+    totalDays?: number;
+    completedDays?: number;
+    skippedDays?: number;
+    failedDays?: number;
+    currentDay?: string;
+    lastProgressAt?: string;
+  } | null;
+}
+
+function ContactsBackfillPanel() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const [range, setRange] = useState({ startDate: "2025-01-01", endDate: "2025-12-31" });
+
+  const { data } = useQuery({
+    queryKey: ["contacts-backfill-status"],
+    queryFn: () =>
+      api.get<{ data: ContactsBackfillStatus; lastRecord: ContactsBackfillRecord | null }>(
+        "/incontact/extract-contacts-daily/status",
+      ),
+    refetchInterval: (q) => {
+      const d = q.state.data;
+      if (d?.data?.status === "running" || d?.lastRecord?.status === "running") return 3000;
+      return 30000;
+    },
+  });
+  const job = data?.data;
+  const record = data?.lastRecord ?? null;
+  // If the server instance restarted mid-backfill, in-memory state reads idle
+  // while the DB row is still 'running' — self-heal auto-resumes within ~10 min.
+  const dbDriven = job?.status !== "running" && record?.status === "running";
+  const isRunning = job?.status === "running" || dbDriven;
+  const progress =
+    job?.status === "running"
+      ? {
+          done: job.completedDays,
+          total: job.totalDays,
+          skipped: job.skippedDays,
+          failed: job.failedDays,
+          currentDay: job.currentDay,
+          phase: job.phase as string,
+        }
+      : dbDriven && record?.detail
+        ? {
+            done: record.detail.completedDays ?? 0,
+            total: record.detail.totalDays ?? 0,
+            skipped: record.detail.skippedDays ?? 0,
+            failed: record.detail.failedDays ?? 0,
+            currentDay: record.detail.currentDay,
+            phase: record.phase ?? "",
+          }
+        : null;
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      api.post<{ message: string; dayCount: number }>("/incontact/extract-contacts-daily", range),
+    onSuccess: (res) => {
+      toast({
+        title: "Backfill started",
+        description: `${res.dayCount} day(s) of call data queued — no recordings will be downloaded`,
+      });
+      queryClient.invalidateQueries({ queryKey: ["contacts-backfill-status"] });
+    },
+    onError: (err: any) =>
+      toast({ title: "Failed to start backfill", description: err?.message || "Unknown error", variant: "destructive" }),
+  });
+
+  const pct = progress && progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
+  const lastOutcome = !isRunning && record && record.status !== "running" ? record : null;
+
+  return (
+    <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold flex items-center gap-2">
+            <Database className="w-4 h-4 text-muted-foreground" />
+            Historical Backfill (call data only)
+          </h3>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Loads past call metadata into BigQuery <span className="font-medium">incontact.calls</span> day by day, then runs one
+            transform at the end. <span className="font-medium">No recordings are queued or downloaded.</span> Safe to re-run the
+            same range: already-loaded days are skipped, and an interrupted run auto-resumes within ~10 minutes.
+          </p>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-end gap-3">
+        <div>
+          <label className="block text-[11px] font-medium text-muted-foreground mb-1">Start date</label>
+          <input
+            type="date"
+            value={range.startDate}
+            onChange={(e) => setRange((r) => ({ ...r, startDate: e.target.value }))}
+            disabled={isRunning}
+            className="border border-border rounded-md px-2 py-1.5 text-xs bg-background disabled:opacity-50"
+          />
+        </div>
+        <div>
+          <label className="block text-[11px] font-medium text-muted-foreground mb-1">End date</label>
+          <input
+            type="date"
+            value={range.endDate}
+            onChange={(e) => setRange((r) => ({ ...r, endDate: e.target.value }))}
+            disabled={isRunning}
+            className="border border-border rounded-md px-2 py-1.5 text-xs bg-background disabled:opacity-50"
+          />
+        </div>
+        <button
+          onClick={() => mutation.mutate()}
+          disabled={mutation.isPending || isRunning || !range.startDate || !range.endDate}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-border rounded-md text-xs font-medium hover:bg-muted disabled:opacity-50 whitespace-nowrap"
+        >
+          {mutation.isPending || isRunning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+          {isRunning ? "Backfill running…" : "Start backfill"}
+        </button>
+      </div>
+
+      {isRunning && progress && (
+        <div className="space-y-1.5">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-medium bg-blue-100 text-blue-700">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              {progress.phase === "transform" ? "transforming" : "extracting"}
+            </span>
+            <span className="text-muted-foreground">
+              {progress.done}/{progress.total} days
+              {progress.skipped > 0 ? ` (${progress.skipped} already loaded)` : ""}
+              {progress.failed > 0 ? ` · ${progress.failed} failed` : ""}
+            </span>
+            {progress.currentDay && (
+              <span className="text-muted-foreground">
+                current: <span className="font-medium text-foreground">{progress.currentDay}</span>
+              </span>
+            )}
+            {dbDriven && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-medium bg-amber-100 text-amber-700">
+                <RefreshCw className="w-3 h-3" />
+                server restarted — auto-resuming
+              </span>
+            )}
+          </div>
+          <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+            <div className="h-full bg-blue-500 transition-all" style={{ width: `${pct}%` }} />
+          </div>
+        </div>
+      )}
+
+      {lastOutcome && (
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <span
+            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-medium ${
+              lastOutcome.status === "completed" ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
+            }`}
+          >
+            {lastOutcome.status === "completed" ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
+            last backfill {lastOutcome.status}
+          </span>
+          <span className="text-muted-foreground">
+            range: <span className="font-medium text-foreground">{lastOutcome.runDate}</span>
+          </span>
+          {lastOutcome.detail && typeof lastOutcome.detail.totalDays === "number" && (
+            <span className="text-muted-foreground">
+              {lastOutcome.detail.completedDays ?? 0}/{lastOutcome.detail.totalDays} days
+              {lastOutcome.detail.skippedDays ? ` (${lastOutcome.detail.skippedDays} skipped)` : ""}
+              {lastOutcome.detail.failedDays ? ` · ${lastOutcome.detail.failedDays} failed` : ""}
+            </span>
+          )}
+          {lastOutcome.completedAt && (
+            <span className="text-muted-foreground">
+              finished: <span className="font-medium text-foreground">{new Date(lastOutcome.completedAt).toLocaleString()}</span>
+            </span>
+          )}
+        </div>
+      )}
+
+      {(job?.error || lastOutcome?.error) && (
+        <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">
+          Error: {job?.error || lastOutcome?.error}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface FilterRule {
   ruleId: string;
   campaignName: string;
@@ -2490,6 +2700,7 @@ export default function InContactPage() {
       {tab === "contacts-daily" && (
         <div className="space-y-4">
           <ScheduledContactsJobPanel />
+          <ContactsBackfillPanel />
           <FilterRulesPanel />
           <AdHocPullPanel />
         </div>

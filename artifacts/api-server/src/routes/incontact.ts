@@ -9,7 +9,7 @@ import {
   extractionRunTable,
   scheduledJobRunTable,
 } from "@workspace/db/schema";
-import { eq, desc, gte, and } from "drizzle-orm";
+import { eq, desc, gte, and, lt, inArray } from "drizzle-orm";
 import { DAILY_JOBS, DAILY_JOBS_LIST } from "../config/daily-jobs";
 
 interface EndpointParam {
@@ -1326,6 +1326,431 @@ router.post("/incontact/contacts-daily-job", async (req, res) => {
 
 router.get("/incontact/contacts-daily-job/status", async (_req, res) => {
   res.json({ data: contactsScheduledJob, yesterdayChicago: getYesterdayInChicago() });
+});
+
+// =============================================================================
+// Contacts historical backfill — call METADATA only (extract + transform).
+// Never touches recordings: it never writes call_list.txt, never triggers the
+// loader/processor, and DEFAULT_PENDING_RECORDINGS_FLOOR keeps backfilled
+// history out of the daily queue step as well.
+//
+// Designed to survive Cloud Run instance recycling (the known killer of
+// long background orchestration here):
+//  - progress is persisted to scheduled_job_run (jobName 'contacts-backfill')
+//    as a heartbeat after every day;
+//  - days whose extraction_run is already COMPLETED for the exact window are
+//    skipped, so re-running the same range only does the missing days;
+//  - the self-heal sweep auto-resumes a 'running' backfill whose heartbeat
+//    has gone stale (instance died) — no operator action needed.
+// =============================================================================
+
+const BACKFILL_JOB_NAME = "contacts-backfill";
+export const BACKFILL_HEARTBEAT_STALE_MINUTES = 30;
+const BACKFILL_MAX_DAYS = 400;
+/** Extraction runs stuck PENDING/RUNNING longer than this are dead orchestrations. */
+const EXTRACTION_RUN_STALE_MINUTES = 30;
+
+let contactsBackfillJob: {
+  status: "idle" | "running" | "completed" | "failed";
+  startDate?: string;
+  endDate?: string;
+  totalDays: number;
+  completedDays: number;
+  skippedDays: number;
+  failedDays: number;
+  currentDay?: string;
+  phase: "extract" | "transform" | "done" | "";
+  startedAt?: string;
+  completedAt?: string;
+  error?: string;
+} = { status: "idle", totalDays: 0, completedDays: 0, skippedDays: 0, failedDays: 0, phase: "" };
+
+async function updateBackfillHeartbeat(recordId: string | null): Promise<void> {
+  if (!recordId) return;
+  try {
+    await db
+      .update(scheduledJobRunTable)
+      .set({
+        phase: contactsBackfillJob.phase,
+        detailJson: {
+          startDate: contactsBackfillJob.startDate,
+          endDate: contactsBackfillJob.endDate,
+          totalDays: contactsBackfillJob.totalDays,
+          completedDays: contactsBackfillJob.completedDays,
+          skippedDays: contactsBackfillJob.skippedDays,
+          failedDays: contactsBackfillJob.failedDays,
+          currentDay: contactsBackfillJob.currentDay,
+          lastProgressAt: new Date().toISOString(),
+        },
+      })
+      .where(eq(scheduledJobRunTable.id, recordId));
+  } catch (err: any) {
+    console.error(`[contacts-backfill] Heartbeat update failed:`, err.message);
+  }
+}
+
+/**
+ * Fails extraction runs stuck PENDING/RUNNING beyond the stale threshold
+ * (dead orchestrations / crashed jobs), so serialization waits don't burn
+ * their timeout on ghosts. Called at backfill start AND before each day —
+ * a run can go stale mid-loop (e.g. a TIMEOUT'd extraction that died).
+ */
+async function failStaleContactsExtractionRuns(endpointId: string): Promise<void> {
+  const staleCutoff = new Date(Date.now() - EXTRACTION_RUN_STALE_MINUTES * 60 * 1000);
+  const staled = await db
+    .update(extractionRunTable)
+    .set({
+      status: "FAILED",
+      endedTs: new Date(),
+      errorSummary: `auto-failed by backfill: stuck PENDING/RUNNING > ${EXTRACTION_RUN_STALE_MINUTES} min (orchestrator likely died)`,
+    })
+    .where(
+      and(
+        eq(extractionRunTable.endpointId, endpointId),
+        inArray(extractionRunTable.status, ["PENDING", "RUNNING"]),
+        lt(extractionRunTable.createdTs, staleCutoff),
+      ),
+    )
+    .returning({ runId: extractionRunTable.runId });
+  if (staled.length > 0) {
+    console.log(`[contacts-backfill] Auto-failed ${staled.length} stale extraction run(s)`);
+  }
+}
+
+async function runContactsBackfill(startDate: string, endDate: string, recordId: string | null) {
+  const ENDPOINT_ID = "nice-cxone-contacts";
+  // Set state synchronously so a second POST racing this one sees "running".
+  contactsBackfillJob = {
+    status: "running",
+    startDate,
+    endDate,
+    totalDays: 0,
+    completedDays: 0,
+    skippedDays: 0,
+    failedDays: 0,
+    phase: "extract",
+    startedAt: new Date().toISOString(),
+  };
+  const startTs = Date.now();
+
+  // Per-day Chicago-local windows, same construction as the daily job so the
+  // skip check below matches daily-created runs exactly.
+  const days: { dayStart: Date; dayEnd: Date; label: string }[] = [];
+  let label = startDate;
+  while (label <= endDate) {
+    const nextLabel = addDaysISO(label, 1);
+    days.push({ dayStart: chicagoDayStartInUTC(label), dayEnd: chicagoDayStartInUTC(nextLabel), label });
+    label = nextLabel;
+  }
+  contactsBackfillJob.totalDays = days.length;
+
+  // Best-effort keepalive: give Cloud Run request traffic while the loop runs.
+  // NOT relied upon for correctness (no instance affinity) — the heartbeat +
+  // self-heal resume is the real safety net.
+  let keepalive: ReturnType<typeof setInterval> | null = null;
+  if (process.env.API_SERVER_URL) {
+    keepalive = setInterval(() => {
+      fetch(`${process.env.API_SERVER_URL}/api/healthz`).catch(() => {});
+    }, 60_000);
+    keepalive.unref();
+  }
+
+  try {
+    await failStaleContactsExtractionRuns(ENDPOINT_ID);
+
+    for (const day of days) {
+      contactsBackfillJob.currentDay = day.label;
+
+      // Resume/idempotency: skip days already extracted (by this backfill, a
+      // previous attempt, or the daily job) for the exact same window.
+      const existing = await db
+        .select({ runId: extractionRunTable.runId })
+        .from(extractionRunTable)
+        .where(
+          and(
+            eq(extractionRunTable.endpointId, ENDPOINT_ID),
+            eq(extractionRunTable.status, "COMPLETED"),
+            eq(extractionRunTable.windowStartTs, day.dayStart),
+            eq(extractionRunTable.windowEndTs, day.dayEnd),
+          ),
+        )
+        .limit(1);
+      if (existing.length > 0) {
+        contactsBackfillJob.skippedDays++;
+        contactsBackfillJob.completedDays++;
+        await updateBackfillHeartbeat(recordId);
+        continue;
+      }
+
+      // A run can go stale mid-loop too (e.g. an extraction that died after a
+      // TIMEOUT'd wait) — clear ghosts before checking for active runs.
+      await failStaleContactsExtractionRuns(ENDPOINT_ID);
+
+      // Serialize with the daily job (and anything else) on this endpoint.
+      const active = await db
+        .select({ runId: extractionRunTable.runId })
+        .from(extractionRunTable)
+        .where(
+          and(
+            eq(extractionRunTable.endpointId, ENDPOINT_ID),
+            inArray(extractionRunTable.status, ["PENDING", "RUNNING"]),
+          ),
+        )
+        .limit(1);
+      if (active.length > 0) {
+        console.log(`[contacts-backfill] Waiting for active run ${active[0].runId} to finish...`);
+        await waitForRunCompletion(active[0].runId, 600000);
+      }
+
+      const [created] = await db
+        .insert(extractionRunTable)
+        .values({
+          sourceSystemId: "nice-cxone",
+          endpointId: ENDPOINT_ID,
+          runType: "MANUAL",
+          requestedBy: "control-plane-backfill",
+          windowStartTs: day.dayStart,
+          windowEndTs: day.dayEnd,
+          status: "PENDING",
+        })
+        .returning();
+
+      const execName = await triggerExtractionJobForRun(created.runId);
+      if (execName) {
+        await db
+          .update(extractionRunTable)
+          .set({ cloudRunJobName: EXTRACTION_JOB_NAME, cloudRunExecutionId: execName })
+          .where(eq(extractionRunTable.runId, created.runId));
+      }
+
+      const finalStatus = await waitForRunCompletion(created.runId, 600000);
+      if (finalStatus !== "COMPLETED") {
+        contactsBackfillJob.failedDays++;
+        console.error(`[contacts-backfill] ${day.label} did not complete: ${finalStatus}`);
+      }
+      contactsBackfillJob.completedDays++;
+      await updateBackfillHeartbeat(recordId);
+      console.log(
+        `[contacts-backfill] ${day.label}: ${finalStatus} (${contactsBackfillJob.completedDays}/${contactsBackfillJob.totalDays})`,
+      );
+    }
+
+    // One full-rebuild transform sweeps everything from raw into incontact.calls.
+    contactsBackfillJob.phase = "transform";
+    contactsBackfillJob.currentDay = undefined;
+    await updateBackfillHeartbeat(recordId);
+    const bqMod = await import("./bq");
+    let transformStarted = false;
+    for (let attempt = 0; attempt < 40; attempt++) {
+      if (bqMod.startContactsTransformPipeline()) {
+        transformStarted = true;
+        break;
+      }
+      // Another transform (e.g. the daily job's) is mid-flight — wait our turn.
+      // Keep heartbeating so self-heal on another instance doesn't mistake this
+      // wait for a dead loop and start a duplicate backfill.
+      await updateBackfillHeartbeat(recordId);
+      await new Promise((r) => setTimeout(r, 30_000));
+    }
+    if (!transformStarted) throw new Error("Could not start transform: another transform stayed busy for 20 minutes");
+    const transformDeadline = Date.now() + 45 * 60 * 1000;
+    for (;;) {
+      const t = bqMod.getContactsTransformJob();
+      if (t.status === "completed") break;
+      if (t.status === "failed") throw new Error(`Transform failed: ${t.error || "unknown error"}`);
+      if (Date.now() > transformDeadline) throw new Error("Timed out waiting for transform to complete");
+      // Heartbeat through the (potentially long) transform so the stale check
+      // never fires while this loop is alive.
+      await updateBackfillHeartbeat(recordId);
+      await new Promise((r) => setTimeout(r, 10_000));
+    }
+
+    const failed = contactsBackfillJob.failedDays;
+    contactsBackfillJob = {
+      ...contactsBackfillJob,
+      status: failed > 0 ? "failed" : "completed",
+      phase: "done",
+      currentDay: undefined,
+      completedAt: new Date().toISOString(),
+      error:
+        failed > 0
+          ? `${failed} day(s) did not extract cleanly — start the same range again to retry just those days`
+          : undefined,
+    };
+    await finishScheduledRunRecord(recordId, {
+      status: failed > 0 ? "failed" : "completed",
+      phase: "done",
+      durationMs: Date.now() - startTs,
+      error: contactsBackfillJob.error,
+      detail: {
+        startDate,
+        endDate,
+        totalDays: contactsBackfillJob.totalDays,
+        completedDays: contactsBackfillJob.completedDays,
+        skippedDays: contactsBackfillJob.skippedDays,
+        failedDays: failed,
+        lastProgressAt: new Date().toISOString(),
+      },
+    });
+    console.log(
+      `[contacts-backfill] Finished ${startDate}..${endDate}: ${contactsBackfillJob.totalDays} days, ${contactsBackfillJob.skippedDays} skipped, ${failed} failed`,
+    );
+  } catch (err: any) {
+    console.error(`[contacts-backfill] Failed:`, err.message);
+    contactsBackfillJob = {
+      ...contactsBackfillJob,
+      status: "failed",
+      completedAt: new Date().toISOString(),
+      error: err.message,
+    };
+    await finishScheduledRunRecord(recordId, {
+      status: "failed",
+      phase: contactsBackfillJob.phase,
+      durationMs: Date.now() - startTs,
+      error: err.message,
+      detail: {
+        startDate,
+        endDate,
+        totalDays: contactsBackfillJob.totalDays,
+        completedDays: contactsBackfillJob.completedDays,
+        skippedDays: contactsBackfillJob.skippedDays,
+        failedDays: contactsBackfillJob.failedDays,
+        lastProgressAt: new Date().toISOString(),
+      },
+    });
+  } finally {
+    if (keepalive) clearInterval(keepalive);
+  }
+}
+
+/**
+ * Called by the self-heal sweep: if a backfill row is 'running' in the DB but
+ * no loop is alive on this instance and the heartbeat is stale, the driving
+ * instance died — restart the loop. Skip logic makes this idempotent.
+ */
+export async function resumeOrphanedContactsBackfill(): Promise<void> {
+  if (contactsBackfillJob.status === "running") return;
+  const [row] = await db
+    .select()
+    .from(scheduledJobRunTable)
+    .where(and(eq(scheduledJobRunTable.jobName, BACKFILL_JOB_NAME), eq(scheduledJobRunTable.status, "running")))
+    .orderBy(desc(scheduledJobRunTable.createdTs))
+    .limit(1);
+  if (!row) return;
+  const detail = (row.detailJson ?? {}) as Record<string, any>;
+  const lastProgress = detail.lastProgressAt
+    ? new Date(detail.lastProgressAt).getTime()
+    : row.startedAt
+      ? new Date(row.startedAt).getTime()
+      : 0;
+  if (Date.now() - lastProgress < BACKFILL_HEARTBEAT_STALE_MINUTES * 60 * 1000) return;
+  if (typeof detail.startDate !== "string" || typeof detail.endDate !== "string") {
+    await finishScheduledRunRecord(row.id, {
+      status: "failed",
+      error: "backfill state row has no date range; cannot auto-resume",
+    });
+    return;
+  }
+  console.log(
+    `[contacts-backfill] Auto-resuming orphaned backfill ${detail.startDate}..${detail.endDate} (no heartbeat since ${detail.lastProgressAt || row.startedAt?.toISOString?.() || "start"})`,
+  );
+  runContactsBackfill(detail.startDate, detail.endDate, row.id);
+}
+
+router.post("/incontact/extract-contacts-daily", async (req, res) => {
+  try {
+    const { startDate, endDate } = req.body || {};
+    const isDate = (s: unknown): s is string => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
+    if (!isDate(startDate) || !isDate(endDate)) {
+      res.status(400).json({ error: "startDate and endDate are required (YYYY-MM-DD)" });
+      return;
+    }
+    if (startDate > endDate) {
+      res.status(400).json({ error: "startDate must be on or before endDate" });
+      return;
+    }
+    if (endDate >= getTodayInChicago()) {
+      res.status(400).json({ error: "endDate must be a past date (the daily job covers yesterday onward)" });
+      return;
+    }
+    let dayCount = 0;
+    for (let d = startDate; d <= endDate; d = addDaysISO(d, 1)) dayCount++;
+    if (dayCount > BACKFILL_MAX_DAYS) {
+      res.status(400).json({ error: `Range too large: ${dayCount} days (max ${BACKFILL_MAX_DAYS})` });
+      return;
+    }
+    if (contactsBackfillJob.status === "running") {
+      res.status(409).json({
+        error: "A backfill is already running",
+        progress: `${contactsBackfillJob.completedDays}/${contactsBackfillJob.totalDays}`,
+        currentDay: contactsBackfillJob.currentDay,
+      });
+      return;
+    }
+    // Cross-instance guard: a 'running' DB row with a fresh heartbeat means
+    // another instance is actively driving a backfill.
+    const [activeRow] = await db
+      .select()
+      .from(scheduledJobRunTable)
+      .where(and(eq(scheduledJobRunTable.jobName, BACKFILL_JOB_NAME), eq(scheduledJobRunTable.status, "running")))
+      .orderBy(desc(scheduledJobRunTable.createdTs))
+      .limit(1);
+    if (activeRow) {
+      const d = (activeRow.detailJson ?? {}) as Record<string, any>;
+      const last = d.lastProgressAt
+        ? new Date(d.lastProgressAt).getTime()
+        : activeRow.startedAt
+          ? new Date(activeRow.startedAt).getTime()
+          : 0;
+      if (Date.now() - last < BACKFILL_HEARTBEAT_STALE_MINUTES * 60 * 1000) {
+        res.status(409).json({
+          error: "A backfill is already running (driven by another server instance)",
+          progress: d.totalDays ? `${d.completedDays ?? 0}/${d.totalDays}` : undefined,
+        });
+        return;
+      }
+      // Stale row with a dead driver: close it out; the new request supersedes it.
+      await finishScheduledRunRecord(activeRow.id, {
+        status: "failed",
+        error: "superseded by a new backfill request after the driving instance died",
+      });
+    }
+
+    const recordId = await startScheduledRunRecord(BACKFILL_JOB_NAME, `${startDate}..${endDate}`, "manual");
+    runContactsBackfill(startDate, endDate, recordId);
+    await updateBackfillHeartbeat(recordId);
+    res.json({ message: "Backfill started (call data only — no recordings)", startDate, endDate, dayCount });
+  } catch (err: any) {
+    console.error("[incontact/extract-contacts-daily]", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get("/incontact/extract-contacts-daily/status", async (_req, res) => {
+  let lastRecord: Record<string, unknown> | null = null;
+  try {
+    const [row] = await db
+      .select()
+      .from(scheduledJobRunTable)
+      .where(eq(scheduledJobRunTable.jobName, BACKFILL_JOB_NAME))
+      .orderBy(desc(scheduledJobRunTable.createdTs))
+      .limit(1);
+    if (row) {
+      lastRecord = {
+        id: row.id,
+        status: row.status,
+        phase: row.phase,
+        runDate: row.runDate,
+        startedAt: row.startedAt,
+        completedAt: row.completedAt,
+        error: row.error,
+        detail: row.detailJson ?? null,
+      };
+    }
+  } catch {
+    // history is best-effort; in-memory state still answers
+  }
+  res.json({ data: contactsBackfillJob, lastRecord });
 });
 
 // A run still marked "running" after this long is almost certainly a process that
