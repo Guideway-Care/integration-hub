@@ -1775,4 +1775,124 @@ router.get("/bq/call-list-status", async (_req, res) => {
   }
 });
 
+router.get("/bq/transcription-status", async (_req, res) => {
+  try {
+    const projectId = getGcpProjectId();
+    const bq = getBigQueryClient("US");
+    const transcripts = `${projectId}.incontact_transcripts.calls`;
+    const { staging } = getBqTables();
+
+    const backlogPromise = bq.query({
+      query: `
+        SELECT COUNT(*) AS backlog
+        FROM \`${staging}\` s
+        LEFT JOIN (
+          SELECT DISTINCT SPLIT(file_name, '.')[OFFSET(0)] AS rec_id
+          FROM \`${transcripts}\`
+        ) t ON s.call_id = t.rec_id
+        WHERE s.status = 'downloaded'
+          AND t.rec_id IS NULL
+          AND s.processed_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY)
+      `,
+    });
+
+    const totalsPromise = bq.query({
+      query: `
+        SELECT
+          COUNT(*) AS total,
+          COUNTIF(status = 'completed') AS completed,
+          COUNTIF(status = 'error') AS errors,
+          COUNTIF(processed_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)) AS transcribed24h,
+          ROUND(SUM(IF(processed_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR),
+            COALESCE(deepgram_cost, 0) + COALESCE(gemini_cost, 0), 0)), 2) AS cost24h,
+          FORMAT_TIMESTAMP('%Y-%m-%dT%H:%M:%E3SZ', MAX(processed_at)) AS lastProcessedAt
+        FROM \`${transcripts}\`
+      `,
+    });
+
+    const dailyPromise = bq.query({
+      query: `
+        SELECT
+          CAST(DATE(processed_at, 'America/Chicago') AS STRING) AS day,
+          COUNT(*) AS calls,
+          COUNTIF(status = 'error') AS errors,
+          ROUND(SUM(COALESCE(deepgram_cost, 0)), 2) AS deepgramCost,
+          ROUND(SUM(COALESCE(gemini_cost, 0)), 2) AS geminiCost
+        FROM \`${transcripts}\`
+        WHERE processed_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
+        GROUP BY 1
+        ORDER BY 1 DESC
+      `,
+    });
+
+    // Last audioflow-processor execution (best-effort; BQ stats still return if this fails)
+    const jobPromise = (async () => {
+      try {
+        const token = await getAccessToken();
+        const exRes = await fetch(
+          `https://run.googleapis.com/v2/projects/${projectId}/locations/us-central1/jobs/audioflow-processor/executions?pageSize=1`,
+          { headers: { Authorization: `Bearer ${token}` } },
+        );
+        if (!exRes.ok) return null;
+        const data = (await exRes.json()) as {
+          executions?: Array<{
+            name?: string;
+            createTime?: string;
+            completionTime?: string;
+            succeededCount?: number;
+            failedCount?: number;
+          }>;
+        };
+        const ex = data.executions?.[0];
+        if (!ex) return null;
+        const state = !ex.completionTime
+          ? "running"
+          : (ex.failedCount || 0) > 0
+            ? "failed"
+            : "succeeded";
+        return {
+          name: ex.name?.split("/").pop() || null,
+          createTime: ex.createTime || null,
+          completionTime: ex.completionTime || null,
+          state,
+        };
+      } catch (err: any) {
+        console.error("[bq/transcription-status] audioflow execution lookup failed:", err.message);
+        return null;
+      }
+    })();
+
+    const [[backlogRows], [totalsRows], [dailyRows], job] = await Promise.all([
+      backlogPromise,
+      totalsPromise,
+      dailyPromise,
+      jobPromise,
+    ]);
+
+    const totals = (totalsRows as any[])[0] || {};
+    res.json({
+      backlog: Number((backlogRows as any[])[0]?.backlog || 0),
+      totals: {
+        total: Number(totals.total || 0),
+        completed: Number(totals.completed || 0),
+        errors: Number(totals.errors || 0),
+        transcribed24h: Number(totals.transcribed24h || 0),
+        cost24h: Number(totals.cost24h || 0),
+        lastProcessedAt: totals.lastProcessedAt || null,
+      },
+      daily: (dailyRows as any[]).map((r) => ({
+        day: r.day,
+        calls: Number(r.calls || 0),
+        errors: Number(r.errors || 0),
+        deepgramCost: Number(r.deepgramCost || 0),
+        geminiCost: Number(r.geminiCost || 0),
+      })),
+      job,
+    });
+  } catch (err: any) {
+    console.error("[bq/transcription-status]", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;

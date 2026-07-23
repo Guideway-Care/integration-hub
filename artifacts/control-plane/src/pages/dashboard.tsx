@@ -17,6 +17,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { ContactCalendar, type DailyCount } from "@/components/contact-calendar";
 import { AutomatedDailyJobsCard } from "@/components/scheduled-jobs";
+import { TranscriptionCard } from "@/components/transcription-card";
 
 interface DashboardData {
   sourceSystems: { total: number; active: number };
@@ -280,6 +281,8 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+
+      <TranscriptionCard />
 
       <div className="grid grid-cols-1 gap-4 mb-6">
         <div className="border border-border rounded-lg p-4 bg-card">
