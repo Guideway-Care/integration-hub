@@ -4,6 +4,7 @@ import { api } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import {
   Play,
+  Pause,
   Loader2,
   Eye,
   CheckCircle2,
@@ -261,6 +262,21 @@ export function AdhocPullCard() {
     },
     onError: (err) =>
       toast({ title: "Resume failed", description: (err as Error).message, variant: "destructive" }),
+  });
+
+  const pauseMutation = useMutation({
+    mutationFn: () =>
+      api.post<{ message: string; cancelled: number }>("/bq/adhoc-pause", {}),
+    onSuccess: (data) => {
+      toast({
+        title: data.cancelled > 0 ? "Download paused" : "Nothing to pause",
+        description: data.message,
+      });
+      queryClient.invalidateQueries({ queryKey: ["adhoc-download-job-status"] });
+      queryClient.invalidateQueries({ queryKey: ["adhoc-batch-progress", trackedBatchId] });
+    },
+    onError: (err) =>
+      toast({ title: "Pause failed", description: (err as Error).message, variant: "destructive" }),
   });
 
   const resetStaleMutation = useMutation({
@@ -614,8 +630,10 @@ export function AdhocPullCard() {
             isDailyActive={isDailyActive}
             resuming={resumeMutation.isPending}
             resetting={resetStaleMutation.isPending}
+            pausing={pauseMutation.isPending}
             onResume={() => resumeMutation.mutate(trackedBatchId)}
             onReset={() => resetStaleMutation.mutate(trackedBatchId)}
+            onPause={() => pauseMutation.mutate()}
             onClear={() => setActiveBatchId(null)}
           />
         )}
@@ -633,8 +651,10 @@ function BatchProgressPanel({
   isDailyActive,
   resuming,
   resetting,
+  pausing,
   onResume,
   onReset,
+  onPause,
   onClear,
 }: {
   batchId: string;
@@ -645,8 +665,10 @@ function BatchProgressPanel({
   isDailyActive: boolean;
   resuming: boolean;
   resetting: boolean;
+  pausing: boolean;
   onResume: () => void;
   onReset: () => void;
+  onPause: () => void;
   onClear: () => void;
 }) {
   const { counts, total, staleProcessing } = progress;
@@ -681,6 +703,18 @@ function BatchProgressPanel({
             >
               {resetting ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCw className="w-3 h-3" />}
               Reset {staleProcessing} stale
+            </button>
+          )}
+          {isAdhocActive && (
+            <button
+              type="button"
+              onClick={onPause}
+              disabled={pausing}
+              title="Cancel the running download. Pending rows stay queued; use Resume to continue later."
+              className="inline-flex items-center gap-1 px-2 py-1 border border-red-300 bg-red-50 text-red-700 rounded text-[11px] hover:bg-red-100 disabled:opacity-50"
+            >
+              {pausing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Pause className="w-3 h-3" />}
+              Pause
             </button>
           )}
           <button

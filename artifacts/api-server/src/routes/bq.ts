@@ -1344,6 +1344,28 @@ let adhocDownloadJob: {
   error?: string;
 } = { status: "idle", step: "" };
 
+// Monotonic token identifying the currently-valid ad-hoc background flow.
+// Each run/resume captures its own token; /bq/adhoc-pause bumps the counter,
+// so a paused flow fails every subsequent token check and exits without
+// starting downstream work or mutating job state.
+let adhocRunToken = 0;
+
+/** Cancel a single Cloud Run execution by resource name. Treats "already
+ *  finished / not found" responses as success (nothing left to cancel). */
+async function cancelCloudRunExecution(executionName: string): Promise<boolean> {
+  const token = await getAccessToken();
+  const res = await fetch(`https://run.googleapis.com/v2/${executionName}:cancel`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: "{}",
+  });
+  if (res.ok) return true;
+  // 404 = gone; 400/409 = already completed/terminal — nothing to cancel.
+  if (res.status === 404 || res.status === 400 || res.status === 409) return false;
+  const errText = await res.text();
+  throw new Error(`Failed to cancel ${executionName}: ${res.status} ${errText}`);
+}
+
 router.get("/bq/adhoc-download-job-status", (_req, res) => {
   res.json(adhocDownloadJob);
 });
@@ -1378,6 +1400,7 @@ router.post("/bq/queue-recordings/adhoc/run", async (req, res) => {
       startedAt: new Date().toISOString(),
     };
     lockAcquired = true;
+    const runToken = ++adhocRunToken;
 
     // Verify the file exists before kicking off Cloud Run jobs.
     const gcsClient = getGCSClient();
@@ -1404,8 +1427,18 @@ router.post("/bq/queue-recordings/adhoc/run", async (req, res) => {
         adhocDownloadJob.step = "loader-running";
         console.log(`[adhoc-run] Loader for ${callListPath}`);
         const loaderResult = await triggerLoaderJob(callListPath);
+        if (runToken !== adhocRunToken) {
+          // Paused while the loader was being triggered — kill it and stop.
+          await cancelCloudRunExecution(loaderResult.executionName).catch(() => {});
+          console.log("[adhoc-run] Paused — cancelled just-started loader, exiting");
+          return;
+        }
         adhocDownloadJob.loaderExecution = loaderResult.executionName;
         const loaderStatus = await waitForExecution(loaderResult.executionName);
+        if (runToken !== adhocRunToken) {
+          console.log("[adhoc-run] Paused during loader — not starting processor");
+          return;
+        }
         if (!loaderStatus.succeeded) {
           throw new Error(`Loader failed: ${loaderStatus.error || "unknown error"}`);
         }
@@ -1413,8 +1446,20 @@ router.post("/bq/queue-recordings/adhoc/run", async (req, res) => {
         adhocDownloadJob.step = "processor-running";
         console.log("[adhoc-run] Processor starting");
         const processorResult = await triggerInContactCloudRunJob("incontact-call-processor");
+        if (runToken !== adhocRunToken) {
+          // Paused while the processor was being triggered — kill it and stop.
+          await cancelCloudRunExecution(processorResult.executionName).catch(() => {});
+          console.log("[adhoc-run] Paused — cancelled just-started processor, exiting");
+          return;
+        }
         adhocDownloadJob.processorExecution = processorResult.executionName;
         const processorStatus = await waitForExecution(processorResult.executionName);
+        // If the operator paused (cancelled) the run, /bq/adhoc-pause already
+        // reset the job state — don't overwrite it with failed/completed.
+        if (runToken !== adhocRunToken) {
+          console.log("[adhoc-run] Paused — skipping status update");
+          return;
+        }
         if (!processorStatus.succeeded) {
           throw new Error(`Processor failed: ${processorStatus.error || "unknown error"}`);
         }
@@ -1424,6 +1469,10 @@ router.post("/bq/queue-recordings/adhoc/run", async (req, res) => {
         adhocDownloadJob.completedAt = new Date().toISOString();
         console.log("[adhoc-run] Completed");
       } catch (err: any) {
+        if (runToken !== adhocRunToken) {
+          console.log("[adhoc-run] Paused — skipping failure update");
+          return;
+        }
         adhocDownloadJob.status = "failed";
         adhocDownloadJob.error = err.message;
         adhocDownloadJob.completedAt = new Date().toISOString();
@@ -1617,6 +1666,7 @@ router.post("/bq/adhoc-resume", async (req, res) => {
       startedAt: new Date().toISOString(),
     };
     lockAcquired = true;
+    const runToken = ++adhocRunToken;
 
     const releaseLock = (extra: Partial<typeof adhocDownloadJob> = {}) => {
       adhocDownloadJob = {
@@ -1689,8 +1739,20 @@ router.post("/bq/adhoc-resume", async (req, res) => {
       try {
         console.log(`[adhoc-resume] Processor restart for batch ${batchId} (reset ${reset} stale)`);
         const processorResult = await triggerInContactCloudRunJob("incontact-call-processor");
+        if (runToken !== adhocRunToken) {
+          // Paused while the processor was being triggered — kill it and stop.
+          await cancelCloudRunExecution(processorResult.executionName).catch(() => {});
+          console.log("[adhoc-resume] Paused — cancelled just-started processor, exiting");
+          return;
+        }
         adhocDownloadJob.processorExecution = processorResult.executionName;
         const processorStatus = await waitForExecution(processorResult.executionName);
+        // If the operator paused (cancelled) the run, /bq/adhoc-pause already
+        // reset the job state — don't overwrite it with failed/completed.
+        if (runToken !== adhocRunToken) {
+          console.log("[adhoc-resume] Paused — skipping status update");
+          return;
+        }
         if (!processorStatus.succeeded) {
           throw new Error(`Processor failed: ${processorStatus.error || "unknown error"}`);
         }
@@ -1699,6 +1761,10 @@ router.post("/bq/adhoc-resume", async (req, res) => {
         adhocDownloadJob.completedAt = new Date().toISOString();
         console.log("[adhoc-resume] Completed");
       } catch (err: any) {
+        if (runToken !== adhocRunToken) {
+          console.log("[adhoc-resume] Paused — skipping failure update");
+          return;
+        }
         adhocDownloadJob.status = "failed";
         adhocDownloadJob.error = err.message;
         adhocDownloadJob.completedAt = new Date().toISOString();
@@ -1719,6 +1785,75 @@ router.post("/bq/adhoc-resume", async (req, res) => {
       return;
     }
     console.error("[bq/adhoc-resume]", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Pause (cancel) the running incontact-call-processor execution(s) so the
+// operator can stop an in-flight recording pull from the dashboard. Queue rows
+// stay 'pending'; rows that were mid-flight self-reset via the processor's
+// 30-min reset or the 5-min stale reset, and Resume picks the batch back up.
+router.post("/bq/adhoc-pause", async (_req, res) => {
+  try {
+    const wasRunning = adhocDownloadJob.status === "running";
+    // Invalidate the active background flow FIRST (synchronously, before any
+    // awaits) so it cannot start downstream work: every phase transition in
+    // /adhoc/run and /adhoc-resume checks its captured token and exits — and
+    // cancels any execution it had just triggered — once the token moves on.
+    adhocRunToken++;
+
+    const cancelled: string[] = [];
+    if (wasRunning) {
+      // Scope cancellation to the executions tied to the active ad-hoc job.
+      for (const name of [adhocDownloadJob.processorExecution, adhocDownloadJob.loaderExecution]) {
+        if (!name) continue;
+        const didCancel = await cancelCloudRunExecution(name);
+        if (didCancel) {
+          cancelled.push(name);
+          console.log(`[adhoc-pause] Cancelled execution ${name}`);
+        }
+      }
+      adhocDownloadJob = {
+        ...adhocDownloadJob,
+        status: "idle",
+        step: "paused",
+        completedAt: new Date().toISOString(),
+      };
+    } else {
+      // No in-memory job (e.g. api-server restarted mid-run, or the run was
+      // started elsewhere) — fall back to cancelling any live processor
+      // execution so the operator can still stop the download.
+      const projectId = getGcpProjectId();
+      const token = await getAccessToken();
+      const listRes = await fetch(
+        `https://run.googleapis.com/v2/projects/${projectId}/locations/us-central1/jobs/incontact-call-processor/executions?pageSize=20`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (!listRes.ok) {
+        throw new Error(`Failed to list processor executions: ${listRes.status}`);
+      }
+      const data = (await listRes.json()) as {
+        executions?: Array<{ name?: string; completionTime?: string }>;
+      };
+      const active = (data.executions || []).filter((ex) => !ex.completionTime && ex.name);
+      for (const ex of active) {
+        const didCancel = await cancelCloudRunExecution(ex.name!);
+        if (didCancel) {
+          cancelled.push(ex.name!);
+          console.log(`[adhoc-pause] Cancelled processor execution ${ex.name}`);
+        }
+      }
+    }
+
+    res.json({
+      message:
+        cancelled.length > 0
+          ? `Paused — cancelled ${cancelled.length} running processor execution(s). Use Resume to continue.`
+          : "No running processor execution found — nothing to pause.",
+      cancelled: cancelled.length,
+    });
+  } catch (err: any) {
+    console.error("[bq/adhoc-pause]", err.message);
     res.status(500).json({ error: err.message });
   }
 });
