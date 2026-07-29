@@ -29,7 +29,8 @@ server {
     }
 
     location /realtime/ {
-        add_header Cache-Control "no-cache";
+        add_header Cache-Control "no-store, no-cache, must-revalidate";
+        add_header Pragma "no-cache";
         try_files $uri $uri/ /realtime/index.html;
     }
 
@@ -38,7 +39,10 @@ server {
     }
 
     location / {
-        add_header Cache-Control "no-cache";
+        # no-store (not just no-cache): corporate/enterprise proxies have served
+        # stale copies of index.html to operators despite no-cache revalidation.
+        add_header Cache-Control "no-store, no-cache, must-revalidate";
+        add_header Pragma "no-cache";
         try_files $uri $uri/ /index.html;
     }
 

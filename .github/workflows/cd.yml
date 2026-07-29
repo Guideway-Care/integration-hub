@@ -50,6 +50,8 @@ jobs:
           context: .
           file: ${{ matrix.target.file }}
           push: true
+          build-args: |
+            GITHUB_SHA=${{ github.sha }}
           tags: |
             ${{ env.ARTIFACT_REGISTRY }}/${{ matrix.target.name }}:${{ github.sha }}
             ${{ env.ARTIFACT_REGISTRY }}/${{ matrix.target.name }}:latest

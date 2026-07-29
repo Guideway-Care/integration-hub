@@ -23,6 +23,8 @@ COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc tsconfig.base.json t
 COPY lib/ lib/
 COPY artifacts/control-plane/ artifacts/control-plane/
 COPY artifacts/realtime/ artifacts/realtime/
+ARG GITHUB_SHA=unknown
+ENV GITHUB_SHA=$GITHUB_SHA
 RUN npx tsc --build lib/db lib/api-zod lib/api-client-react
 RUN pnpm --filter @workspace/control-plane run build
 RUN PORT=8080 BASE_PATH=/realtime/ pnpm --filter @workspace/realtime run build

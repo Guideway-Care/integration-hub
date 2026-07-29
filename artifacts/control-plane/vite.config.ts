@@ -9,6 +9,14 @@ const basePath = process.env.BASE_PATH || "/";
 
 export default defineConfig({
   base: basePath,
+  define: {
+    __BUILD_ID__: JSON.stringify(
+      (process.env.GITHUB_SHA || "dev").slice(0, 7) +
+        " · " +
+        new Date().toISOString().slice(0, 16).replace("T", " ") +
+        "Z",
+    ),
+  },
   plugins: [
     react(),
     tailwindcss(),

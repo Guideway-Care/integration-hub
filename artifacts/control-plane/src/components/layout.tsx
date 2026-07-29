@@ -82,6 +82,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           <div>
             <h1 className="text-sm font-semibold text-sidebar-foreground">InContact Extractor</h1>
             <p className="text-[10px] text-muted-foreground">Contacts · Agents · Recordings</p>
+            <p className="text-[9px] font-mono text-muted-foreground/60" title="Build version">
+              build {__BUILD_ID__}
+            </p>
           </div>
         </div>
         <nav className="p-2 space-y-3">
