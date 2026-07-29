@@ -211,13 +211,15 @@ export function AdhocPullCard() {
   // progress/Resume panel shows up even when this browser never tracked the batch
   // (e.g. it was started elsewhere, or localStorage was cleared).
   type RecentBatch = { batchId: string; counts: { pending: number; processing: number } };
-  const { data: recentBatches } = useQuery({
+  const {
+    data: recentBatches,
+    error: recentBatchesError,
+    refetch: refetchRecentBatches,
+  } = useQuery({
     queryKey: ["adhoc-recent-batches"],
-    queryFn: () =>
-      api
-        .get<{ data: RecentBatch[] }>("/bq/adhoc-recent-batches?limit=10")
-        .catch((): { data: RecentBatch[] } => ({ data: [] })),
+    queryFn: () => api.get<{ data: RecentBatch[] }>("/bq/adhoc-recent-batches?limit=10"),
     refetchInterval: 60000,
+    retry: 2,
   });
   const fallbackBatchId =
     recentBatches?.data.find((b) => b.counts.pending > 0 || b.counts.processing > 0)?.batchId ??
@@ -231,7 +233,7 @@ export function AdhocPullCard() {
     if (adhocStatus?.batchId) setActiveBatchId(adhocStatus.batchId);
   }, [adhocStatus?.batchId]);
 
-  const { data: progress, isFetching: progressFetching } = useQuery({
+  const { data: progress, isFetching: progressFetching, error: progressError } = useQuery({
     queryKey: ["adhoc-batch-progress", trackedBatchId],
     queryFn: () =>
       api.get<BatchProgress>(
@@ -633,6 +635,22 @@ export function AdhocPullCard() {
               <div className="font-mono text-[11px] opacity-80">batch: {adhocStatus!.batchId}</div>
             )}
             {adhocStatus!.error && <div className="mt-1">Error: {adhocStatus!.error}</div>}
+          </div>
+        )}
+
+        {(recentBatchesError || progressError) && (
+          <div className="mt-2 p-2.5 rounded-md border border-red-300 bg-red-50 text-red-800 text-xs flex items-center justify-between gap-2">
+            <span>
+              Couldn't load batch progress:{" "}
+              {((recentBatchesError || progressError) as Error)?.message || "request failed"}
+            </span>
+            <button
+              type="button"
+              onClick={() => refetchRecentBatches()}
+              className="shrink-0 inline-flex items-center gap-1 px-2 py-1 border border-red-300 rounded hover:bg-red-100"
+            >
+              <RotateCw className="w-3 h-3" /> Retry
+            </button>
           </div>
         )}
 
