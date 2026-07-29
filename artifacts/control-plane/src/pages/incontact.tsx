@@ -311,7 +311,7 @@ function ScheduledAgentsJobPanel() {
 }
 
 interface ScheduledContactsJobStatus {
-  status: "idle" | "running" | "completed" | "failed";
+  status: "idle" | "running" | "completed" | "failed" | "skipped";
   phase: "extract" | "transform" | "queue" | "download" | "done" | "";
   date?: string;
   startedAt?: string;
@@ -353,6 +353,7 @@ function ScheduledContactsJobPanel() {
     job?.status === "completed" ? "bg-green-100 text-green-700"
     : job?.status === "failed" ? "bg-red-100 text-red-700"
     : job?.status === "running" ? "bg-blue-100 text-blue-700"
+    : job?.status === "skipped" ? "bg-slate-100 text-slate-700"
     : "bg-gray-100 text-gray-700";
 
   return (
@@ -382,8 +383,9 @@ function ScheduledContactsJobPanel() {
           {job?.status === "completed" ? <CheckCircle2 className="w-3 h-3" /> :
            job?.status === "failed" ? <XCircle className="w-3 h-3" /> :
            job?.status === "running" ? <Loader2 className="w-3 h-3 animate-spin" /> :
+           job?.status === "skipped" ? <Pause className="w-3 h-3" /> :
            <Clock className="w-3 h-3" />}
-          {job?.status ?? "idle"}
+          {job?.status === "skipped" ? "skipped (paused)" : job?.status ?? "idle"}
           {job?.status === "running" && job.phase ? ` · ${job.phase}` : ""}
         </span>
         {job?.date && <span className="text-muted-foreground">date: <span className="font-medium text-foreground">{job.date}</span></span>}

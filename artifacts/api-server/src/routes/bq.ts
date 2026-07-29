@@ -1141,6 +1141,17 @@ router.get("/bq/download-job-status", async (_req, res) => {
 
 router.post("/bq/run-job", async (_req, res) => {
   await reconcileDownloadJob();
+  // Product decision (task 20): an operator Pause holds back ALL download
+  // starts — including this endpoint — until they explicitly Resume. This
+  // prevents a paused-overnight pipeline from restarting unexpectedly.
+  if (await isDownloadPaused()) {
+    console.log("[run-job] Skipped — downloads are paused by an operator (paused marker present)");
+    res.status(409).json({
+      error: "Downloads are paused by an operator — click Resume to continue, then retry",
+      skipped: "paused",
+    });
+    return;
+  }
   if (downloadJob.status === "running") {
     res.status(409).json({ error: "Download pipeline is already running", step: downloadJob.step });
     return;
@@ -1248,7 +1259,13 @@ router.post("/bq/run-job-resume", async (_req, res) => {
 
     const { pending } = await getStagingActivity();
     if (pending === 0) {
-      res.status(409).json({ error: "Nothing to resume — no pending or stale processing rows in the staging queue" });
+      // Nothing left to drain: end the paused state too, otherwise the daily
+      // paused marker would block /bq/run-job forever with no way to clear it.
+      if (downloadJob.step === "paused") downloadJob = { status: "idle", step: "" };
+      clearPausedMarker(DAILY_PAUSED_MARKER).catch((err) =>
+        console.error("[run-job-resume] Failed to clear daily paused marker:", err.message),
+      );
+      res.status(409).json({ error: "Nothing to resume — no pending or stale processing rows in the staging queue (paused state cleared)" });
       return;
     }
 

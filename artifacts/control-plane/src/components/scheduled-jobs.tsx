@@ -8,6 +8,7 @@ import {
   AlertTriangle,
   CircleDashed,
   Clock,
+  PauseCircle,
 } from "lucide-react";
 
 export interface ScheduledRun {
@@ -15,7 +16,7 @@ export interface ScheduledRun {
   jobName: string;
   runDate: string;
   trigger: "manual" | "scheduled";
-  status: "running" | "completed" | "failed";
+  status: "running" | "completed" | "failed" | "skipped";
   phase: string | null;
   startedAt: string | null;
   completedAt: string | null;
@@ -93,12 +94,14 @@ function relativeTime(iso: string | null): string {
   return `${days}d ago`;
 }
 
-type DayStatus = "completed" | "failed" | "running" | "stale" | "missing";
+type DayStatus = "completed" | "failed" | "running" | "stale" | "skipped" | "missing";
 
 function dayVisual(status: DayStatus) {
   switch (status) {
     case "completed":
       return { Icon: CheckCircle2, cls: "text-green-600", bg: "bg-green-50 border-green-200", label: "Pulled" };
+    case "skipped":
+      return { Icon: PauseCircle, cls: "text-slate-600", bg: "bg-slate-50 border-slate-200", label: "Skipped (paused)" };
     case "failed":
       return { Icon: XCircle, cls: "text-red-600", bg: "bg-red-50 border-red-200", label: "Failed" };
     case "running":
@@ -199,6 +202,7 @@ function PipelineBlock({
               {latest.trigger === "manual" && " · manual"}
               {formatDuration(latest.durationMs) && ` · ${formatDuration(latest.durationMs)}`}
               {latest.status === "failed" && <span className="text-red-600 font-medium">· failed</span>}
+              {latest.status === "skipped" && <span className="text-slate-600 font-medium">· skipped (paused)</span>}
             </div>
           )}
         </>
@@ -272,6 +276,8 @@ export function ScheduleIndicator({ jobName }: { jobName: string }) {
           {yesterdayPulled ? (
             yesterdayPulled.status === "failed" || yesterdayPulled.stale ? (
               <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+            ) : yesterdayPulled.status === "skipped" ? (
+              <PauseCircle className="w-3.5 h-3.5 text-slate-600" />
             ) : (
               <CheckCircle2 className="w-3.5 h-3.5 text-green-600" />
             )
@@ -279,7 +285,7 @@ export function ScheduleIndicator({ jobName }: { jobName: string }) {
             <CircleDashed className="w-3.5 h-3.5 text-amber-600" />
           )}
           {yesterdayPulled
-            ? `Yesterday (${shortDate(data.yesterdayChicago)}) ${yesterdayPulled.stale ? "stalled" : yesterdayPulled.status}`
+            ? `Yesterday (${shortDate(data.yesterdayChicago)}) ${yesterdayPulled.stale ? "stalled" : yesterdayPulled.status === "skipped" ? "skipped (paused)" : yesterdayPulled.status}`
             : `Yesterday (${shortDate(data.yesterdayChicago)}) not yet pulled`}
           <span className="text-muted-foreground/60">· last run {relativeTime(latest.completedAt ?? latest.startedAt)}</span>
         </span>

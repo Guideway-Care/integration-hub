@@ -555,15 +555,34 @@ describe("daily paused marker lifecycle", () => {
     expect(status.body.step).toBe("paused");
   });
 
-  it("starting the daily pipeline clears the daily marker", async () => {
+  it("run-job short-circuits with 409 while a paused marker exists (task 20 decision)", async () => {
     const app = await freshApp();
     pollSucceeds = true;
     gcsStore.set(dailyMarkerKey, JSON.stringify({ batchId: null, pausedAt: "2026-07-01T00:00:00Z" }));
 
     const res = await request(app).post("/bq/run-job").send({});
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(409);
+    expect(res.body.skipped).toBe("paused");
+
+    // The marker is NOT cleared — only an explicit Resume ends the paused state.
+    expect(gcsStore.has(dailyMarkerKey)).toBe(true);
+  });
+
+  it("run-job-resume with an empty queue clears the daily marker so run-job can't deadlock", async () => {
+    const app = await freshApp();
+    pollSucceeds = true;
+    gcsStore.set(dailyMarkerKey, JSON.stringify({ batchId: null, pausedAt: "2026-07-01T00:00:00Z" }));
+    // Resume validation query: nothing pending.
+    bqQueryResults.push([{ pending: 0, processing: 0 }]);
+
+    const res = await request(app).post("/bq/run-job-resume").send({});
+    expect(res.status).toBe(409);
 
     await waitFor(() => !gcsStore.has(dailyMarkerKey));
+
+    // With the paused state cleared, run-job is allowed again.
+    const runRes = await request(app).post("/bq/run-job").send({});
+    expect(runRes.status).toBe(200);
   });
 
   it("daily resume clears the daily marker", async () => {
@@ -604,7 +623,7 @@ describe("daily paused marker lifecycle", () => {
     expect(res.body.step).toBe("");
   });
 
-  it("hydrated paused state does not block starting a new daily run", async () => {
+  it("hydrated paused state blocks run-job until resumed (task 20 decision)", async () => {
     gcsStore.set(dailyMarkerKey, JSON.stringify({ batchId: null, pausedAt: "2026-07-28T12:00:00Z" }));
     const app = await freshApp();
     pollSucceeds = true;
@@ -613,7 +632,13 @@ describe("daily paused marker lifecycle", () => {
     expect(statusRes.body.step).toBe("paused");
 
     const runRes = await request(app).post("/bq/run-job").send({});
-    expect(runRes.status).toBe(200);
+    expect(runRes.status).toBe(409);
+    expect(runRes.body.skipped).toBe("paused");
+
+    // Resume (pending work exists) is the sanctioned way out of paused state.
+    bqQueryResults.push([{ pending: 4, processing: 0 }]);
+    const resumeRes = await request(app).post("/bq/run-job-resume").send({});
+    expect(resumeRes.status).toBe(200);
     await waitFor(() => !gcsStore.has(dailyMarkerKey));
   });
 });

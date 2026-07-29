@@ -824,6 +824,8 @@ function BatchProgressPanel({
           <span>
             Download paused — {remaining.toLocaleString()} row{remaining === 1 ? "" : "s"} remaining.
             Click <strong>Resume</strong> to continue where it left off.
+            While paused, the 6:30 AM scheduled daily download is also held back
+            (its run will show as "skipped (paused)").
           </span>
         </div>
       )}

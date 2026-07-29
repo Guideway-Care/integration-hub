@@ -798,7 +798,7 @@ async function startScheduledRunRecord(
 async function finishScheduledRunRecord(
   id: string | null,
   patch: {
-    status: "completed" | "failed";
+    status: "completed" | "failed" | "skipped";
     phase?: string;
     durationMs?: number;
     error?: string;
@@ -1107,7 +1107,7 @@ async function runContactsDailyExtraction(startDate: string, endDate: string) {
 }
 
 let contactsScheduledJob: {
-  status: "idle" | "running" | "completed" | "failed";
+  status: "idle" | "running" | "completed" | "failed" | "skipped";
   phase: "extract" | "transform" | "queue" | "download" | "done" | "";
   date?: string;
   startedAt?: string;
@@ -1156,6 +1156,31 @@ async function runContactsScheduledJob(date: string, trigger: "manual" | "schedu
     const transform = bqMod.getContactsTransformJob();
     if (transform.status !== "completed") {
       throw new Error(`Transform failed: ${transform.error || "unknown error"}`);
+    }
+
+    // Product decision (task 20): an operator Pause also holds back the
+    // scheduled daily download. Extract + transform above still run (data
+    // freshness is preserved), but the queue/download phases are skipped and
+    // the run is recorded as "skipped (paused)". The next unpaused daily run
+    // picks up any contacts still missing recordings.
+    if (await bqMod.isDownloadPaused()) {
+      contactsScheduledJob = {
+        ...contactsScheduledJob,
+        status: "skipped",
+        phase: "done",
+        completedAt: new Date().toISOString(),
+        durationMs: Date.now() - startTs,
+      };
+      await finishScheduledRunRecord(recordId, {
+        status: "skipped",
+        phase: "done",
+        durationMs: Date.now() - startTs,
+        detail: {
+          note: "downloads paused by operator — extract + transform completed, recording queue/download skipped",
+        },
+      });
+      console.log(`[contacts-scheduled] Skipped queue/download for ${date} — downloads are paused by an operator`);
+      return;
     }
 
     // Phase 3: Queue recordings (uses DB rules, falls back to defaults)
