@@ -1162,6 +1162,64 @@ router.post("/bq/run-job", async (_req, res) => {
   })();
 });
 
+// Resume a paused daily download: skip the loader and just re-trigger the
+// processor to drain whatever is still 'pending' in the staging queue.
+router.post("/bq/run-job-resume", async (_req, res) => {
+  try {
+    await reconcileDownloadJob();
+    if (downloadJob.status === "running") {
+      res.status(409).json({ error: "Download pipeline is already running", step: downloadJob.step });
+      return;
+    }
+    if (adhocDownloadJob.status === "running") {
+      res.status(409).json({ error: "Ad-hoc download is currently running — wait for it to finish", step: adhocDownloadJob.step });
+      return;
+    }
+
+    const { pending } = await getStagingActivity();
+    if (pending === 0) {
+      res.status(409).json({ error: "Nothing to resume — no pending rows in the staging queue" });
+      return;
+    }
+
+    // Claim the lock before any further awaits so a concurrent /run-job or
+    // /run-job-resume can't pass the same gate.
+    downloadJob = {
+      status: "running",
+      step: "processor-running",
+      startedAt: new Date().toISOString(),
+    };
+    const runToken = ++dailyRunToken;
+
+    res.json({ message: "Resume started — processor re-triggered", status: "running", pending });
+
+    (async () => {
+      try {
+        console.log(`[run-job-resume] Re-triggering processor to drain ${pending} pending row(s) (loader skipped)`);
+        const processorResult = await triggerInContactCloudRunJob("incontact-call-processor");
+        if (runToken !== dailyRunToken) {
+          console.log("[run-job-resume] Pipeline paused — cancelling freshly-triggered processor");
+          await cancelCloudRunExecution(processorResult.executionName).catch(() => {});
+          return;
+        }
+        downloadJob.processorExecution = processorResult.executionName;
+        console.log("[run-job-resume] Processor triggered (autonomous drain):", processorResult.executionName);
+      } catch (err: any) {
+        if (runToken !== dailyRunToken) {
+          console.log("[run-job-resume] Pipeline paused — suppressing error from cancelled flow:", err.message);
+          return;
+        }
+        downloadJob.status = "failed";
+        downloadJob.error = err.message;
+        console.error("[run-job-resume] Resume failed:", err.message);
+      }
+    })();
+  } catch (err: any) {
+    console.error("[bq/run-job-resume]", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post("/bq/queue-recordings", async (req, res) => {
   try {
     const { rules, usedFallback } = await loadActiveDailyRules();

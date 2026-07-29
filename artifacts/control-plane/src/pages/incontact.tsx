@@ -1374,6 +1374,20 @@ export default function InContactPage() {
     },
   });
 
+  const resumeDownloadMutation = useMutation({
+    mutationFn: () => api.post<{ message: string; pending: number }>("/bq/run-job-resume"),
+    onSuccess: (data) => {
+      toast({
+        title: "Download resumed",
+        description: `Processor re-triggered — draining ${data.pending.toLocaleString()} pending row(s) (loader skipped).`,
+      });
+      queryClient.invalidateQueries({ queryKey: ["download-job-status"] });
+      queryClient.invalidateQueries({ queryKey: ["staging-summary"] });
+    },
+    onError: (err) =>
+      toast({ title: "Resume failed", description: (err as Error).message, variant: "destructive" }),
+  });
+
   const pauseDownloadMutation = useMutation({
     mutationFn: () =>
       api.post<{ message: string; cancelled: number }>("/bq/adhoc-pause", {}),
@@ -1949,6 +1963,20 @@ export default function InContactPage() {
                     >
                       {pauseDownloadMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Pause className="w-3 h-3" />}
                       Pause
+                    </button>
+                  )}
+                  {downloadJobStatus?.status !== "running"
+                    && adhocJob?.status !== "running"
+                    && (summary?.processing ?? 0) === 0
+                    && (summary?.pending ?? 0) > 0 && (
+                    <button
+                      onClick={() => resumeDownloadMutation.mutate()}
+                      disabled={resumeDownloadMutation.isPending}
+                      title="Resume the paused download: re-trigger only the processor to drain the pending queue rows (skips the loader)."
+                      className="ml-auto inline-flex items-center gap-1.5 px-2.5 py-1 border border-green-300 bg-green-50 text-green-700 rounded text-xs hover:bg-green-100 disabled:opacity-50"
+                    >
+                      {resumeDownloadMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
+                      Resume
                     </button>
                   )}
                 </div>
