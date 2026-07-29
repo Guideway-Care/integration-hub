@@ -233,6 +233,22 @@ export function AdhocPullCard() {
     if (adhocStatus?.batchId) setActiveBatchId(adhocStatus.batchId);
   }, [adhocStatus?.batchId]);
 
+  // A stale batchId in localStorage (from an old pull whose queue rows were
+  // cleaned up) would otherwise shadow the server-side fallback forever and
+  // silently hide the progress panel: its progress query succeeds with
+  // total 0, so no panel and no error. Drop it and let the fallback take over.
+  useEffect(() => {
+    if (
+      activeBatchId &&
+      !adhocStatus?.batchId &&
+      progress &&
+      progress.batchId === activeBatchId &&
+      progress.total === 0
+    ) {
+      setActiveBatchId(null);
+    }
+  }, [activeBatchId, adhocStatus?.batchId, progress]);
+
   const { data: progress, isFetching: progressFetching, error: progressError } = useQuery({
     queryKey: ["adhoc-batch-progress", trackedBatchId],
     queryFn: () =>
