@@ -233,6 +233,21 @@ export function AdhocPullCard() {
     if (adhocStatus?.batchId) setActiveBatchId(adhocStatus.batchId);
   }, [adhocStatus?.batchId]);
 
+  const { data: progress, isFetching: progressFetching, error: progressError } = useQuery({
+    queryKey: ["adhoc-batch-progress", trackedBatchId],
+    queryFn: () =>
+      api.get<BatchProgress>(
+        `/bq/adhoc-batch-progress?batchId=${encodeURIComponent(trackedBatchId!)}`,
+      ),
+    enabled: !!trackedBatchId,
+    refetchInterval: (q) => {
+      const p = q.state.data;
+      if (!p) return false;
+      const live = p.counts.pending > 0 || p.counts.processing > 0;
+      return live ? 5000 : 20000;
+    },
+  });
+
   // A stale batchId in localStorage (from an old pull whose queue rows were
   // cleaned up) would otherwise shadow the server-side fallback forever and
   // silently hide the progress panel: its progress query succeeds with
@@ -248,21 +263,6 @@ export function AdhocPullCard() {
       setActiveBatchId(null);
     }
   }, [activeBatchId, adhocStatus?.batchId, progress]);
-
-  const { data: progress, isFetching: progressFetching, error: progressError } = useQuery({
-    queryKey: ["adhoc-batch-progress", trackedBatchId],
-    queryFn: () =>
-      api.get<BatchProgress>(
-        `/bq/adhoc-batch-progress?batchId=${encodeURIComponent(trackedBatchId!)}`,
-      ),
-    enabled: !!trackedBatchId,
-    refetchInterval: (q) => {
-      const p = q.state.data;
-      if (!p) return false;
-      const live = p.counts.pending > 0 || p.counts.processing > 0;
-      return live ? 5000 : 20000;
-    },
-  });
 
   const resumeMutation = useMutation({
     mutationFn: (batchId: string) =>
