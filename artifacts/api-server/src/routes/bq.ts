@@ -147,13 +147,20 @@ router.get("/bq/staging-summary", async (req, res) => {
       params.endDate = endDate;
     }
     const [rows] = await bq.query({
-      query: `SELECT status, COUNT(*) as count FROM \`${staging}\`${whereClause} GROUP BY status ORDER BY status`,
-      params,
+      query: `SELECT status, COUNT(*) as count,
+              COUNTIF(TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, MINUTE) > @stale) as stale_count
+              FROM \`${staging}\`${whereClause} GROUP BY status ORDER BY status`,
+      params: { ...params, stale: ADHOC_STALE_MINUTES },
+      types: { stale: "INT64" },
     });
     const summary: Record<string, number> = { pending: 0, processing: 0, downloaded: 0, failed: 0 };
-    rows.forEach((r: any) => { summary[r.status] = Number(r.count); });
+    let staleProcessing = 0;
+    rows.forEach((r: any) => {
+      summary[r.status] = Number(r.count);
+      if (r.status === "processing") staleProcessing = Number(r.stale_count);
+    });
     const total = Object.values(summary).reduce((a, b) => a + b, 0);
-    res.json({ ...summary, total });
+    res.json({ ...summary, staleProcessing, total });
   } catch (err: any) {
     console.error("[bq/staging-summary]", err.message);
     res.status(500).json({ error: err.message });
@@ -1205,9 +1212,28 @@ router.post("/bq/run-job-resume", async (_req, res) => {
       return;
     }
 
+    // Auto-reset rows stuck in 'processing' (crash/pause mid-download) back to
+    // 'pending' so a single Resume click always recovers the run — mirrors the
+    // /bq/adhoc-resume behavior. Uses the same ADHOC_STALE_MINUTES threshold.
+    const bq = getBigQueryClient("US");
+    const { staging } = getBqTables();
+    const [resetJob] = await bq.createQueryJob({
+      query: `
+        UPDATE \`${staging}\`
+        SET status = 'pending', error_message = NULL
+        WHERE status = 'processing'
+          AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, MINUTE) > @stale
+      `,
+      params: { stale: ADHOC_STALE_MINUTES },
+      types: { stale: "INT64" },
+    });
+    await resetJob.getQueryResults();
+    const [resetMeta] = await resetJob.getMetadata();
+    const staleReset = Number(resetMeta?.statistics?.query?.numDmlAffectedRows || 0);
+
     const { pending } = await getStagingActivity();
     if (pending === 0) {
-      res.status(409).json({ error: "Nothing to resume — no pending rows in the staging queue" });
+      res.status(409).json({ error: "Nothing to resume — no pending or stale processing rows in the staging queue" });
       return;
     }
 
@@ -1225,11 +1251,11 @@ router.post("/bq/run-job-resume", async (_req, res) => {
       console.error("[run-job-resume] Failed to clear daily paused marker:", err.message),
     );
 
-    res.json({ message: "Resume started — processor re-triggered", status: "running", pending });
+    res.json({ message: "Resume started — processor re-triggered", status: "running", pending, staleReset });
 
     (async () => {
       try {
-        console.log(`[run-job-resume] Re-triggering processor to drain ${pending} pending row(s) (loader skipped)`);
+        console.log(`[run-job-resume] Re-triggering processor to drain ${pending} pending row(s) (reset ${staleReset} stale, loader skipped)`);
         const processorResult = await triggerInContactCloudRunJob("incontact-call-processor");
         if (runToken !== dailyRunToken) {
           console.log("[run-job-resume] Pipeline paused — cancelling freshly-triggered processor");

@@ -40,6 +40,8 @@ type Tab = "pipeline" | "agents" | "monitor" | "staging" | "recordings" | "conta
 interface StagingSummary {
   pending: number;
   processing: number;
+  /** 'processing' rows older than the stale threshold (~5 min) — recoverable via Resume. */
+  staleProcessing?: number;
   downloaded: number;
   failed: number;
   total: number;
@@ -1967,12 +1969,12 @@ export default function InContactPage() {
                   )}
                   {downloadJobStatus?.status !== "running"
                     && adhocJob?.status !== "running"
-                    && (summary?.processing ?? 0) === 0
-                    && (summary?.pending ?? 0) > 0 && (
+                    && (summary?.processing ?? 0) === (summary?.staleProcessing ?? 0)
+                    && ((summary?.pending ?? 0) > 0 || (summary?.staleProcessing ?? 0) > 0) && (
                     <button
                       onClick={() => resumeDownloadMutation.mutate()}
                       disabled={resumeDownloadMutation.isPending}
-                      title="Resume the paused download: re-trigger only the processor to drain the pending queue rows (skips the loader)."
+                      title="Resume the paused download: flip stale 'processing' rows back to pending, then re-trigger only the processor to drain the queue (skips the loader)."
                       className="ml-auto inline-flex items-center gap-1.5 px-2.5 py-1 border border-green-300 bg-green-50 text-green-700 rounded text-xs hover:bg-green-100 disabled:opacity-50"
                     >
                       {resumeDownloadMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
