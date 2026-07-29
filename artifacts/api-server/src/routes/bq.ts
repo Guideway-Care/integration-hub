@@ -1392,7 +1392,72 @@ async function cancelCloudRunExecution(executionName: string): Promise<boolean> 
   throw new Error(`Failed to cancel ${executionName}: ${res.status} ${errText}`);
 }
 
-router.get("/bq/adhoc-download-job-status", (_req, res) => {
+// Durable paused flag: /bq/adhoc-pause writes this marker to GCS so the paused
+// state survives api-server restarts; run/resume clear it. The status endpoint
+// hydrates the in-memory job from the marker once after a cold start.
+const ADHOC_PAUSED_MARKER = "adhoc_state/paused.json";
+
+async function writePausedMarker(batchId?: string): Promise<void> {
+  const { bucket } = getBqTables();
+  const gcs = getGCSClient();
+  await gcs
+    .bucket(bucket)
+    .file(ADHOC_PAUSED_MARKER)
+    .save(JSON.stringify({ batchId: batchId ?? null, pausedAt: new Date().toISOString() }), {
+      contentType: "application/json",
+    });
+}
+
+async function clearPausedMarker(): Promise<void> {
+  const { bucket } = getBqTables();
+  const gcs = getGCSClient();
+  await gcs
+    .bucket(bucket)
+    .file(ADHOC_PAUSED_MARKER)
+    .delete({ ignoreNotFound: true });
+}
+
+async function readPausedMarker(): Promise<{ batchId?: string | null; pausedAt?: string } | null> {
+  const { bucket } = getBqTables();
+  const gcs = getGCSClient();
+  const file = gcs.bucket(bucket).file(ADHOC_PAUSED_MARKER);
+  const [exists] = await file.exists();
+  if (!exists) return null;
+  const [contents] = await file.download();
+  try {
+    return JSON.parse(contents.toString("utf-8"));
+  } catch {
+    return {};
+  }
+}
+
+// Only hydrate from the GCS marker once per process lifetime — after that the
+// in-memory state is authoritative (pause/run/resume keep the marker in sync).
+let pausedMarkerHydrated = false;
+
+router.get("/bq/adhoc-download-job-status", async (_req, res) => {
+  if (!pausedMarkerHydrated && adhocDownloadJob.status === "idle" && adhocDownloadJob.step === "") {
+    pausedMarkerHydrated = true;
+    try {
+      const marker = await readPausedMarker();
+      if (marker && adhocDownloadJob.status === "idle" && adhocDownloadJob.step === "") {
+        adhocDownloadJob = {
+          ...adhocDownloadJob,
+          status: "idle",
+          step: "paused",
+          batchId: marker.batchId || adhocDownloadJob.batchId,
+          completedAt: marker.pausedAt || adhocDownloadJob.completedAt,
+        };
+        console.log(
+          `[adhoc-status] Restored paused state from GCS marker (batch ${marker.batchId || "unknown"})`,
+        );
+      }
+    } catch (err: any) {
+      // Non-fatal: fall back to in-memory state; retry on next poll.
+      pausedMarkerHydrated = false;
+      console.error("[adhoc-status] Failed to read paused marker:", err.message);
+    }
+  }
   res.json(adhocDownloadJob);
 });
 
@@ -1446,6 +1511,10 @@ router.post("/bq/queue-recordings/adhoc/run", async (req, res) => {
     }
 
     adhocDownloadJob.step = "starting-loader";
+    // A new run supersedes any previous paused batch — clear the durable flag.
+    clearPausedMarker().catch((err) =>
+      console.error("[adhoc-run] Failed to clear paused marker:", err.message),
+    );
     res.json({ message: "Ad-hoc download started", batchId, status: "running" });
 
     (async () => {
@@ -1759,6 +1828,10 @@ router.post("/bq/adhoc-resume", async (req, res) => {
       step: "resume-processor-running",
     };
 
+    // Resuming ends the paused state — clear the durable flag.
+    clearPausedMarker().catch((err) =>
+      console.error("[adhoc-resume] Failed to clear paused marker:", err.message),
+    );
     res.json({ message: "Resume started", batchId, status: "running", staleReset: reset });
 
     (async () => {
@@ -1819,8 +1892,15 @@ router.post("/bq/adhoc-resume", async (req, res) => {
 // operator can stop an in-flight recording pull from the dashboard. Queue rows
 // stay 'pending'; rows that were mid-flight self-reset via the processor's
 // 30-min reset or the 5-min stale reset, and Resume picks the batch back up.
-router.post("/bq/adhoc-pause", async (_req, res) => {
+router.post("/bq/adhoc-pause", async (req, res) => {
   try {
+    // Optional batchId from the client — used to stamp the durable paused
+    // marker when the server has no in-memory job (e.g. after a restart).
+    const bodyBatchId =
+      typeof req.body?.batchId === "string" &&
+      /^(adhoc_|loader-)[A-Za-z0-9_\-:.]+$/.test(req.body.batchId)
+        ? (req.body.batchId as string)
+        : undefined;
     const wasRunning = adhocDownloadJob.status === "running";
     const dailyWasRunning = downloadJob.status === "running";
     // Invalidate the active background flows FIRST (synchronously, before any
@@ -1866,6 +1946,10 @@ router.post("/bq/adhoc-pause", async (_req, res) => {
         step: "paused",
         completedAt: new Date().toISOString(),
       };
+      // Persist the paused flag so it survives api-server restarts.
+      await writePausedMarker(adhocDownloadJob.batchId || bodyBatchId).catch((err) =>
+        console.error("[adhoc-pause] Failed to write paused marker:", err.message),
+      );
     } else if (!dailyWasRunning) {
       // No in-memory job (e.g. api-server restarted mid-run, or the run was
       // started elsewhere) — fall back to cancelling any live processor
@@ -1889,6 +1973,20 @@ router.post("/bq/adhoc-pause", async (_req, res) => {
           cancelled.push(ex.name!);
           console.log(`[adhoc-pause] Cancelled processor execution ${ex.name}`);
         }
+      }
+      if (cancelled.length > 0) {
+        // We did stop live work — record the paused state (in memory and
+        // durably) even though this server never tracked the run.
+        adhocDownloadJob = {
+          ...adhocDownloadJob,
+          status: "idle",
+          step: "paused",
+          batchId: bodyBatchId || adhocDownloadJob.batchId,
+          completedAt: new Date().toISOString(),
+        };
+        await writePausedMarker(bodyBatchId || adhocDownloadJob.batchId).catch((err) =>
+          console.error("[adhoc-pause] Failed to write paused marker:", err.message),
+        );
       }
     }
 

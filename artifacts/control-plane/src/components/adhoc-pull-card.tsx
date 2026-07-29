@@ -266,7 +266,12 @@ export function AdhocPullCard() {
 
   const pauseMutation = useMutation({
     mutationFn: () =>
-      api.post<{ message: string; cancelled: number }>("/bq/adhoc-pause", {}),
+      api.post<{ message: string; cancelled: number }>(
+        "/bq/adhoc-pause",
+        // Pass the tracked batch so the server can stamp its durable paused
+        // marker even when it restarted and lost the in-memory job state.
+        trackedBatchId ? { batchId: trackedBatchId } : {},
+      ),
     onSuccess: (data) => {
       toast({
         title: data.cancelled > 0 ? "Download paused" : "Nothing to pause",
