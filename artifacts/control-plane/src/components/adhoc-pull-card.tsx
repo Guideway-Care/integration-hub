@@ -367,6 +367,16 @@ export function AdhocPullCard() {
   const showStatus = adhocStatus && adhocStatus.status !== "idle";
   const incomplete =
     !!progress && (progress.counts.pending > 0 || progress.staleProcessing > 0);
+  // After a pause, the server leaves status "idle" with step "paused". Show a
+  // persistent paused indicator while there is still work left to resume.
+  const isPaused =
+    adhocStatus?.status === "idle" &&
+    adhocStatus?.step === "paused" &&
+    !isAdhocActive &&
+    !!progress &&
+    (progress.counts.pending > 0 ||
+      progress.counts.processing > 0 ||
+      progress.staleProcessing > 0);
   const canResume =
     !!trackedBatchId &&
     incomplete &&
@@ -626,6 +636,7 @@ export function AdhocPullCard() {
             progress={progress}
             fetching={progressFetching}
             canResume={canResume}
+            paused={isPaused}
             isAdhocActive={isAdhocActive}
             isDailyActive={isDailyActive}
             resuming={resumeMutation.isPending}
@@ -647,6 +658,7 @@ function BatchProgressPanel({
   progress,
   fetching,
   canResume,
+  paused,
   isAdhocActive,
   isDailyActive,
   resuming,
@@ -661,6 +673,7 @@ function BatchProgressPanel({
   progress: BatchProgress;
   fetching: boolean;
   canResume: boolean;
+  paused: boolean;
   isAdhocActive: boolean;
   isDailyActive: boolean;
   resuming: boolean;
@@ -691,6 +704,12 @@ function BatchProgressPanel({
           {fetching ? <RefreshCw className="w-3 h-3 animate-spin opacity-60" /> : <Download className="w-3 h-3 opacity-60" />}
           Batch progress
           <span className="font-mono text-[11px] text-muted-foreground">{batchId}</span>
+          {paused && (
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-100 border border-amber-300 text-amber-800 text-[10px] font-semibold uppercase tracking-wide">
+              <Pause className="w-2.5 h-2.5" />
+              Paused
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-1.5">
           {staleProcessing > 0 && (
@@ -754,6 +773,16 @@ function BatchProgressPanel({
         <Stat color="red" label="Failed" value={counts.failed} pct={pct(counts.failed)} />
         <Stat color="slate" label="Total" value={total} pct={100} />
       </div>
+
+      {paused && (
+        <div className="flex items-start gap-1.5 text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">
+          <Pause className="w-3 h-3 mt-0.5 shrink-0" />
+          <span>
+            Download paused — {remaining.toLocaleString()} row{remaining === 1 ? "" : "s"} remaining.
+            Click <strong>Resume</strong> to continue where it left off.
+          </span>
+        </div>
+      )}
 
       {staleProcessing > 0 && (
         <div className="flex items-start gap-1.5 text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">
