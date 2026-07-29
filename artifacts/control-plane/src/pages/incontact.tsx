@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   XCircle,
   Loader2,
+  Pause,
   Play,
   RotateCcw,
   Database,
@@ -1373,6 +1374,22 @@ export default function InContactPage() {
     },
   });
 
+  const pauseDownloadMutation = useMutation({
+    mutationFn: () =>
+      api.post<{ message: string; cancelled: number }>("/bq/adhoc-pause", {}),
+    onSuccess: (data) => {
+      toast({
+        title: data.cancelled > 0 ? "Download paused" : "Nothing to pause",
+        description: data.message,
+      });
+      queryClient.invalidateQueries({ queryKey: ["download-job-status"] });
+      queryClient.invalidateQueries({ queryKey: ["adhoc-download-job-status"] });
+      queryClient.invalidateQueries({ queryKey: ["staging-summary"] });
+    },
+    onError: (err) =>
+      toast({ title: "Pause failed", description: (err as Error).message, variant: "destructive" }),
+  });
+
   const addCallIdsMutation = useMutation({
     mutationFn: () => {
       const ids = callIds.split(/[\n,\s]+/).map((s) => s.trim()).filter(Boolean);
@@ -1923,6 +1940,17 @@ export default function InContactPage() {
                   <span>
                     Processor running — {summary?.pending?.toLocaleString() ?? 0} pending, {summary?.processing ?? 0} in progress
                   </span>
+                  {(downloadJobStatus?.status === "running" || (summary?.processing ?? 0) > 0) && (
+                    <button
+                      onClick={() => pauseDownloadMutation.mutate()}
+                      disabled={pauseDownloadMutation.isPending}
+                      title="Cancel the running download pipeline. Pending rows stay queued; queue them again or resume from the ad-hoc panel later."
+                      className="ml-auto inline-flex items-center gap-1.5 px-2.5 py-1 border border-red-300 bg-red-50 text-red-700 rounded text-xs hover:bg-red-100 disabled:opacity-50"
+                    >
+                      {pauseDownloadMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Pause className="w-3 h-3" />}
+                      Pause
+                    </button>
+                  )}
                 </div>
               )}
               {downloadJobStatus?.status === "running" && (summary?.processing ?? 0) === 0 && (
@@ -1933,6 +1961,15 @@ export default function InContactPage() {
                     {downloadJobStatus.step === "processor-running" && "Starting processor..."}
                     {downloadJobStatus.step === "starting-loader" && "Starting loader..."}
                   </span>
+                  <button
+                    onClick={() => pauseDownloadMutation.mutate()}
+                    disabled={pauseDownloadMutation.isPending}
+                    title="Cancel the running download pipeline. Pending rows stay queued."
+                    className="ml-auto inline-flex items-center gap-1.5 px-2.5 py-1 border border-red-300 bg-red-50 text-red-700 rounded text-xs hover:bg-red-100 disabled:opacity-50"
+                  >
+                    {pauseDownloadMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Pause className="w-3 h-3" />}
+                    Pause
+                  </button>
                 </div>
               )}
               {downloadJobStatus?.status === "failed" && downloadJobStatus.error && (

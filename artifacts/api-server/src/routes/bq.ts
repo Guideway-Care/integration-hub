@@ -1055,6 +1055,12 @@ let downloadJob: {
   error?: string;
 } = { status: "idle", step: "" };
 
+// Monotonic token identifying the currently-valid daily pipeline background
+// flow. /bq/run-job captures its own token; /bq/adhoc-pause bumps the counter,
+// so a paused run's background flow exits without mutating job state or
+// triggering downstream work.
+let dailyRunToken = 0;
+
 /**
  * Resolve the download drain's terminal state from the authoritative staging
  * queue. The processor job drains the queue on its own, so rather than keeping a
@@ -1099,6 +1105,7 @@ router.post("/bq/run-job", async (_req, res) => {
   }
 
   downloadJob = { status: "running", step: "starting-loader", startedAt: new Date().toISOString() };
+  const runToken = ++dailyRunToken;
 
   res.json({ message: "Download pipeline started", status: "running" });
 
@@ -1107,11 +1114,21 @@ router.post("/bq/run-job", async (_req, res) => {
       downloadJob.step = "loader-running";
       console.log("[run-job] Step 1: Triggering loader to move call_list.txt → staging queue");
       const loaderResult = await triggerInContactCloudRunJob("incontact-call-loader");
+      if (runToken !== dailyRunToken) {
+        // Paused while the loader was being triggered — cancel it and bail out.
+        console.log("[run-job] Pipeline paused — cancelling freshly-triggered loader");
+        await cancelCloudRunExecution(loaderResult.executionName).catch(() => {});
+        return;
+      }
       downloadJob.loaderExecution = loaderResult.executionName;
       console.log("[run-job] Loader triggered:", loaderResult.executionName);
 
       console.log("[run-job] Waiting for loader to complete...");
       const loaderStatus = await waitForExecution(loaderResult.executionName, LOADER_WAIT_MS);
+      if (runToken !== dailyRunToken) {
+        console.log("[run-job] Pipeline paused during loader wait — exiting");
+        return;
+      }
       if (!loaderStatus.succeeded) {
         throw new Error(`Loader failed: ${loaderStatus.error || "unknown error"}`);
       }
@@ -1126,9 +1143,18 @@ router.post("/bq/run-job", async (_req, res) => {
       downloadJob.step = "processor-running";
       console.log("[run-job] Step 2: Triggering processor to drain the staging queue");
       const processorResult = await triggerInContactCloudRunJob("incontact-call-processor");
+      if (runToken !== dailyRunToken) {
+        console.log("[run-job] Pipeline paused — cancelling freshly-triggered processor");
+        await cancelCloudRunExecution(processorResult.executionName).catch(() => {});
+        return;
+      }
       downloadJob.processorExecution = processorResult.executionName;
       console.log("[run-job] Processor triggered (autonomous drain):", processorResult.executionName);
     } catch (err: any) {
+      if (runToken !== dailyRunToken) {
+        console.log("[run-job] Pipeline paused — suppressing error from cancelled flow:", err.message);
+        return;
+      }
       downloadJob.status = "failed";
       downloadJob.error = err.message;
       console.error("[run-job] Pipeline failed:", err.message);
@@ -1796,13 +1822,34 @@ router.post("/bq/adhoc-resume", async (req, res) => {
 router.post("/bq/adhoc-pause", async (_req, res) => {
   try {
     const wasRunning = adhocDownloadJob.status === "running";
-    // Invalidate the active background flow FIRST (synchronously, before any
-    // awaits) so it cannot start downstream work: every phase transition in
-    // /adhoc/run and /adhoc-resume checks its captured token and exits — and
-    // cancels any execution it had just triggered — once the token moves on.
+    const dailyWasRunning = downloadJob.status === "running";
+    // Invalidate the active background flows FIRST (synchronously, before any
+    // awaits) so they cannot start downstream work: every phase transition in
+    // /adhoc/run, /adhoc-resume and /run-job checks its captured token and
+    // exits — and cancels any execution it had just triggered — once the
+    // token moves on.
     adhocRunToken++;
+    dailyRunToken++;
 
     const cancelled: string[] = [];
+    if (dailyWasRunning) {
+      // Cancel the daily pipeline's executions and clear its lock so the
+      // operator can pause the daily download the same way as an ad-hoc pull.
+      for (const name of [downloadJob.processorExecution, downloadJob.loaderExecution]) {
+        if (!name) continue;
+        const didCancel = await cancelCloudRunExecution(name);
+        if (didCancel) {
+          cancelled.push(name);
+          console.log(`[adhoc-pause] Cancelled daily pipeline execution ${name}`);
+        }
+      }
+      downloadJob = {
+        ...downloadJob,
+        status: "idle",
+        step: "paused",
+        completedAt: new Date().toISOString(),
+      };
+    }
     if (wasRunning) {
       // Scope cancellation to the executions tied to the active ad-hoc job.
       for (const name of [adhocDownloadJob.processorExecution, adhocDownloadJob.loaderExecution]) {
@@ -1819,7 +1866,7 @@ router.post("/bq/adhoc-pause", async (_req, res) => {
         step: "paused",
         completedAt: new Date().toISOString(),
       };
-    } else {
+    } else if (!dailyWasRunning) {
       // No in-memory job (e.g. api-server restarted mid-run, or the run was
       // started elsewhere) — fall back to cancelling any live processor
       // execution so the operator can still stop the download.

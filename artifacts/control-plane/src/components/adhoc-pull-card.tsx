@@ -273,6 +273,7 @@ export function AdhocPullCard() {
         description: data.message,
       });
       queryClient.invalidateQueries({ queryKey: ["adhoc-download-job-status"] });
+      queryClient.invalidateQueries({ queryKey: ["download-job-status"] });
       queryClient.invalidateQueries({ queryKey: ["adhoc-batch-progress", trackedBatchId] });
     },
     onError: (err) =>
@@ -724,12 +725,16 @@ function BatchProgressPanel({
               Reset {staleProcessing} stale
             </button>
           )}
-          {isAdhocActive && (
+          {(isAdhocActive || isDailyActive) && (
             <button
               type="button"
               onClick={onPause}
               disabled={pausing}
-              title="Cancel the running download. Pending rows stay queued; use Resume to continue later."
+              title={
+                isDailyActive && !isAdhocActive
+                  ? "Cancel the running daily download pipeline. Pending rows stay queued; use Resume to continue later."
+                  : "Cancel the running download. Pending rows stay queued; use Resume to continue later."
+              }
               className="inline-flex items-center gap-1 px-2 py-1 border border-red-300 bg-red-50 text-red-700 rounded text-[11px] hover:bg-red-100 disabled:opacity-50"
             >
               {pausing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Pause className="w-3 h-3" />}
