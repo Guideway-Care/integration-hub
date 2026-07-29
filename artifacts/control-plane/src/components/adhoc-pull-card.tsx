@@ -206,8 +206,25 @@ export function AdhocPullCard() {
     refetchInterval: (q) => (q.state.data?.status === "running" ? 3000 : 15000),
   });
 
-  // Track the latest known batchId — either the actively running one or the one we last touched.
-  const trackedBatchId = adhocStatus?.batchId || activeBatchId;
+  // Server-side fallback: find the most recent incomplete batch in BigQuery so the
+  // progress/Resume panel shows up even when this browser never tracked the batch
+  // (e.g. it was started elsewhere, or localStorage was cleared).
+  type RecentBatch = { batchId: string; counts: { pending: number; processing: number } };
+  const { data: recentBatches } = useQuery({
+    queryKey: ["adhoc-recent-batches"],
+    queryFn: () =>
+      api
+        .get<{ data: RecentBatch[] }>("/bq/adhoc-recent-batches?limit=10")
+        .catch((): { data: RecentBatch[] } => ({ data: [] })),
+    refetchInterval: 60000,
+  });
+  const fallbackBatchId =
+    recentBatches?.data.find((b) => b.counts.pending > 0 || b.counts.processing > 0)?.batchId ??
+    null;
+
+  // Track the latest known batchId — the actively running one, the one we last touched,
+  // or the newest incomplete batch known to the server.
+  const trackedBatchId = adhocStatus?.batchId || activeBatchId || fallbackBatchId;
 
   useEffect(() => {
     if (adhocStatus?.batchId) setActiveBatchId(adhocStatus.batchId);

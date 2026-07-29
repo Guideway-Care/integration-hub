@@ -1449,7 +1449,10 @@ router.post("/bq/queue-recordings/adhoc/run", async (req, res) => {
 });
 
 const BatchIdSchema = z.object({
-  batchId: z.string().regex(/^adhoc_[A-Za-z0-9_\-:.]+$/, "Invalid batchId"),
+  // Accept both `adhoc_...` (API-assigned) and `loader-...` ids — the Cloud Run
+  // loader stamps its own `loader-...` batch_id onto staging rows, so real
+  // batches in BigQuery carry that prefix.
+  batchId: z.string().regex(/^(adhoc_|loader-)[A-Za-z0-9_\-:.]+$/, "Invalid batchId"),
 });
 
 // Single source of truth: a 'processing' row older than this is considered stuck.
@@ -1475,7 +1478,7 @@ router.get("/bq/adhoc-recent-batches", async (req, res) => {
           MAX(created_at) AS lastQueuedAt
         FROM \`${staging}\`
         WHERE batch_id IS NOT NULL
-          AND STARTS_WITH(batch_id, 'adhoc_')
+          AND (STARTS_WITH(batch_id, 'adhoc_') OR STARTS_WITH(batch_id, 'loader-'))
         GROUP BY batch_id
         ORDER BY MAX(created_at) DESC
         LIMIT @limit
@@ -1505,7 +1508,7 @@ router.get("/bq/adhoc-recent-batches", async (req, res) => {
 router.get("/bq/adhoc-batch-progress", async (req, res) => {
   try {
     const batchId = String(req.query.batchId || "");
-    if (!/^adhoc_[A-Za-z0-9_\-:.]+$/.test(batchId)) {
+    if (!/^(adhoc_|loader-)[A-Za-z0-9_\-:.]+$/.test(batchId)) {
       res.status(400).json({ error: "Invalid batchId" });
       return;
     }
