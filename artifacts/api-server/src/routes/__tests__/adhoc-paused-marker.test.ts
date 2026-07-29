@@ -16,6 +16,7 @@ import express from "express";
 import request from "supertest";
 
 const PAUSED_MARKER = "adhoc_state/paused.json";
+const DAILY_PAUSED_MARKER = "daily_state/paused.json";
 const BUCKET = "incontact-audio";
 
 // ---------------------------------------------------------------------------
@@ -205,6 +206,7 @@ async function freshApp() {
 }
 
 const markerKey = `${BUCKET}/${PAUSED_MARKER}`;
+const dailyMarkerKey = `${BUCKET}/${DAILY_PAUSED_MARKER}`;
 const tick = () => new Promise((r) => setTimeout(r, 25));
 
 async function waitFor(cond: () => boolean, timeoutMs = 2000) {
@@ -520,5 +522,98 @@ describe("pause race windows — daily pipeline (/bq/run-job)", () => {
     expect(status.body.status).toBe("idle");
     expect(status.body.step).toBe("paused");
     expect(status.body.error).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Durable daily paused marker (daily_state/paused.json) — mirrors the ad-hoc
+// marker lifecycle so the daily pipeline's Paused banner survives an
+// api-server restart.
+// ---------------------------------------------------------------------------
+describe("daily paused marker lifecycle", () => {
+  it("pausing a running daily pipeline writes the daily marker", async () => {
+    const app = await freshApp();
+    pollSucceeds = true;
+    const hold = holdPoll("exec-1"); // loader status poll — keeps the run in flight
+
+    const runRes = await request(app).post("/bq/run-job").send({});
+    expect(runRes.status).toBe(200);
+    await hold.hit;
+
+    const pauseRes = await request(app).post("/bq/adhoc-pause").send({});
+    expect(pauseRes.status).toBe(200);
+    hold.release();
+
+    await waitFor(() => gcsStore.has(dailyMarkerKey));
+    const marker = JSON.parse(gcsStore.get(dailyMarkerKey)!);
+    expect(marker.pausedAt).toBeTruthy();
+    // Ad-hoc marker is untouched by a daily-only pause.
+    expect(gcsStore.has(markerKey)).toBe(false);
+
+    const status = await request(app).get("/bq/download-job-status");
+    expect(status.body.status).toBe("idle");
+    expect(status.body.step).toBe("paused");
+  });
+
+  it("starting the daily pipeline clears the daily marker", async () => {
+    const app = await freshApp();
+    pollSucceeds = true;
+    gcsStore.set(dailyMarkerKey, JSON.stringify({ batchId: null, pausedAt: "2026-07-01T00:00:00Z" }));
+
+    const res = await request(app).post("/bq/run-job").send({});
+    expect(res.status).toBe(200);
+
+    await waitFor(() => !gcsStore.has(dailyMarkerKey));
+  });
+
+  it("daily resume clears the daily marker", async () => {
+    const app = await freshApp();
+    pollSucceeds = true;
+    gcsStore.set(dailyMarkerKey, JSON.stringify({ batchId: null, pausedAt: "2026-07-01T00:00:00Z" }));
+    // Resume validation query: pending work exists.
+    bqQueryResults.push([{ pending: 4, processing: 0 }]);
+
+    const res = await request(app).post("/bq/run-job-resume").send({});
+    expect(res.status).toBe(200);
+
+    await waitFor(() => !gcsStore.has(dailyMarkerKey));
+  });
+
+  it("daily status endpoint hydrates paused state from the marker after a cold start", async () => {
+    const pausedAt = "2026-07-28T12:00:00.000Z";
+    gcsStore.set(dailyMarkerKey, JSON.stringify({ batchId: null, pausedAt }));
+
+    // Fresh module = simulated api-server restart (in-memory state wiped).
+    const app = await freshApp();
+    const res = await request(app).get("/bq/download-job-status");
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("idle");
+    expect(res.body.step).toBe("paused");
+    expect(res.body.completedAt).toBe(pausedAt);
+
+    // Subsequent polls keep reporting paused (hydration is one-shot, state sticks).
+    const res2 = await request(app).get("/bq/download-job-status");
+    expect(res2.body.step).toBe("paused");
+  });
+
+  it("daily status endpoint stays idle after a cold start when no marker exists", async () => {
+    const app = await freshApp();
+    const res = await request(app).get("/bq/download-job-status");
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("idle");
+    expect(res.body.step).toBe("");
+  });
+
+  it("hydrated paused state does not block starting a new daily run", async () => {
+    gcsStore.set(dailyMarkerKey, JSON.stringify({ batchId: null, pausedAt: "2026-07-28T12:00:00Z" }));
+    const app = await freshApp();
+    pollSucceeds = true;
+
+    const statusRes = await request(app).get("/bq/download-job-status");
+    expect(statusRes.body.step).toBe("paused");
+
+    const runRes = await request(app).post("/bq/run-job").send({});
+    expect(runRes.status).toBe(200);
+    await waitFor(() => !gcsStore.has(dailyMarkerKey));
   });
 });

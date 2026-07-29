@@ -1088,7 +1088,31 @@ async function reconcileDownloadJob(): Promise<void> {
   }
 }
 
+// Only hydrate the daily job from its GCS marker once per process lifetime —
+// after that the in-memory state is authoritative (pause/run/resume keep the
+// marker in sync). Mirrors pausedMarkerHydrated for the ad-hoc job.
+let dailyPausedMarkerHydrated = false;
+
 router.get("/bq/download-job-status", async (_req, res) => {
+  if (!dailyPausedMarkerHydrated && downloadJob.status === "idle" && downloadJob.step === "") {
+    dailyPausedMarkerHydrated = true;
+    try {
+      const marker = await readPausedMarker(DAILY_PAUSED_MARKER);
+      if (marker && downloadJob.status === "idle" && downloadJob.step === "") {
+        downloadJob = {
+          ...downloadJob,
+          status: "idle",
+          step: "paused",
+          completedAt: marker.pausedAt || downloadJob.completedAt,
+        };
+        console.log("[download-job-status] Restored paused state from GCS marker");
+      }
+    } catch (err: any) {
+      // Non-fatal: fall back to in-memory state; retry on next poll.
+      dailyPausedMarkerHydrated = false;
+      console.error("[download-job-status] Failed to read daily paused marker:", err.message);
+    }
+  }
   await reconcileDownloadJob();
   res.json(downloadJob);
 });
@@ -1106,6 +1130,11 @@ router.post("/bq/run-job", async (_req, res) => {
 
   downloadJob = { status: "running", step: "starting-loader", startedAt: new Date().toISOString() };
   const runToken = ++dailyRunToken;
+
+  // A new run ends any previous paused state — clear the durable flag.
+  clearPausedMarker(DAILY_PAUSED_MARKER).catch((err) =>
+    console.error("[run-job] Failed to clear daily paused marker:", err.message),
+  );
 
   res.json({ message: "Download pipeline started", status: "running" });
 
@@ -1190,6 +1219,11 @@ router.post("/bq/run-job-resume", async (_req, res) => {
       startedAt: new Date().toISOString(),
     };
     const runToken = ++dailyRunToken;
+
+    // Resuming ends the paused state — clear the durable flag.
+    clearPausedMarker(DAILY_PAUSED_MARKER).catch((err) =>
+      console.error("[run-job-resume] Failed to clear daily paused marker:", err.message),
+    );
 
     res.json({ message: "Resume started — processor re-triggered", status: "running", pending });
 
@@ -1454,31 +1488,37 @@ async function cancelCloudRunExecution(executionName: string): Promise<boolean> 
 // state survives api-server restarts; run/resume clear it. The status endpoint
 // hydrates the in-memory job from the marker once after a cold start.
 const ADHOC_PAUSED_MARKER = "adhoc_state/paused.json";
+// Same pattern for the daily pipeline: /bq/adhoc-pause writes it when it pauses
+// the daily download; /bq/run-job and /bq/run-job-resume clear it; the daily
+// status endpoint hydrates from it after a cold start.
+const DAILY_PAUSED_MARKER = "daily_state/paused.json";
 
-async function writePausedMarker(batchId?: string): Promise<void> {
+async function writePausedMarker(batchId?: string, markerPath = ADHOC_PAUSED_MARKER): Promise<void> {
   const { bucket } = getBqTables();
   const gcs = getGCSClient();
   await gcs
     .bucket(bucket)
-    .file(ADHOC_PAUSED_MARKER)
+    .file(markerPath)
     .save(JSON.stringify({ batchId: batchId ?? null, pausedAt: new Date().toISOString() }), {
       contentType: "application/json",
     });
 }
 
-async function clearPausedMarker(): Promise<void> {
+async function clearPausedMarker(markerPath = ADHOC_PAUSED_MARKER): Promise<void> {
   const { bucket } = getBqTables();
   const gcs = getGCSClient();
   await gcs
     .bucket(bucket)
-    .file(ADHOC_PAUSED_MARKER)
+    .file(markerPath)
     .delete({ ignoreNotFound: true });
 }
 
-async function readPausedMarker(): Promise<{ batchId?: string | null; pausedAt?: string } | null> {
+async function readPausedMarker(
+  markerPath = ADHOC_PAUSED_MARKER,
+): Promise<{ batchId?: string | null; pausedAt?: string } | null> {
   const { bucket } = getBqTables();
   const gcs = getGCSClient();
-  const file = gcs.bucket(bucket).file(ADHOC_PAUSED_MARKER);
+  const file = gcs.bucket(bucket).file(markerPath);
   const [exists] = await file.exists();
   if (!exists) return null;
   const [contents] = await file.download();
@@ -1987,6 +2027,10 @@ router.post("/bq/adhoc-pause", async (req, res) => {
         step: "paused",
         completedAt: new Date().toISOString(),
       };
+      // Persist the daily paused flag so it survives api-server restarts.
+      await writePausedMarker(undefined, DAILY_PAUSED_MARKER).catch((err) =>
+        console.error("[adhoc-pause] Failed to write daily paused marker:", err.message),
+      );
     }
     if (wasRunning) {
       // Scope cancellation to the executions tied to the active ad-hoc job.
