@@ -90,6 +90,48 @@ vi.mock("@workspace/db/schema", () => ({ recordingFilterRuleTable: {} }));
 let executionCounter = 0;
 let cancelledExecutions: string[];
 let activeProcessorExecutions: Array<{ name: string; completionTime?: string }>;
+/** Job names (loader/processor) that were :run-triggered, in order. */
+let triggeredJobs: string[];
+/** When true, execution status polls report successful completion by default. */
+let pollSucceeds: boolean;
+
+/**
+ * A "hold" gates a single matching fetch request: the mock signals `hit` when
+ * the request arrives, then blocks the response until `release()` is called.
+ * This lets tests pause the pipeline deterministically inside a race window
+ * (e.g. while a Cloud Run trigger or status poll is in flight).
+ */
+type FetchHold = {
+  match: (url: string) => boolean;
+  hit: Promise<void>;
+  signalHit: () => void;
+  gate: Promise<void>;
+  release: () => void;
+  used: boolean;
+};
+let fetchHolds: FetchHold[];
+
+function makeHold(match: (url: string) => boolean): FetchHold {
+  let signalHit!: () => void;
+  let release!: () => void;
+  const hit = new Promise<void>((r) => (signalHit = r));
+  const gate = new Promise<void>((r) => (release = r));
+  const hold: FetchHold = { match, hit, signalHit, gate, release, used: false };
+  fetchHolds.push(hold);
+  return hold;
+}
+
+/** Hold the Cloud Run :run trigger for a specific job. */
+function holdRunTrigger(jobName: string) {
+  return makeHold((url) => url.includes(`/jobs/${jobName}:run`));
+}
+
+/** Hold the execution status poll for a specific execution (not :cancel). */
+function holdPoll(execSuffix: string) {
+  return makeHold(
+    (url) => !url.includes(":cancel") && !url.includes(":run") && url.endsWith(execSuffix),
+  );
+}
 
 function jsonResponse(body: unknown, status = 200) {
   return {
@@ -105,8 +147,17 @@ function installFetchMock() {
     "fetch",
     vi.fn(async (input: any) => {
       const url = String(input);
+      // Gate the request if a hold matches (one request per hold).
+      const hold = fetchHolds.find((h) => !h.used && h.match(url));
+      if (hold) {
+        hold.used = true;
+        hold.signalHit();
+        await hold.gate;
+      }
       if (url.includes(":run")) {
-        const name = `projects/test-project/locations/us-central1/jobs/x/executions/exec-${++executionCounter}`;
+        const jobMatch = url.match(/\/jobs\/([^/:]+):run/);
+        if (jobMatch) triggeredJobs.push(jobMatch[1]);
+        const name = `projects/test-project/locations/us-central1/jobs/${jobMatch?.[1] || "x"}/executions/exec-${++executionCounter}`;
         return jsonResponse({ metadata: { name } });
       }
       if (url.includes(":cancel")) {
@@ -126,6 +177,12 @@ function installFetchMock() {
         return jsonResponse({
           completionTime: new Date().toISOString(),
           conditions: [{ type: "Completed", state: "CONDITION_FAILED", message: "cancelled" }],
+        });
+      }
+      if (pollSucceeds) {
+        return jsonResponse({
+          completionTime: new Date().toISOString(),
+          conditions: [{ type: "Completed", state: "CONDITION_SUCCEEDED" }],
         });
       }
       return jsonResponse({});
@@ -161,8 +218,15 @@ beforeEach(() => {
   bqQueryResults = [];
   cancelledExecutions = [];
   activeProcessorExecutions = [];
+  triggeredJobs = [];
+  fetchHolds = [];
+  pollSucceeds = false;
+  executionCounter = 0;
   installFetchMock();
 });
+
+const wasCancelled = (execSuffix: string) =>
+  cancelledExecutions.some((n) => n.endsWith(execSuffix));
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -254,5 +318,207 @@ describe("paused marker lifecycle", () => {
     expect(res.status).toBe(200);
     expect(res.body.status).toBe("idle");
     expect(res.body.step).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Run-token race windows: a Pause that lands while a background flow is
+// mid-phase must stop the flow — cancelling any just-triggered Cloud Run
+// execution — and must never let the flow overwrite the paused job state
+// with completed/failed or start downstream work.
+// ---------------------------------------------------------------------------
+describe("pause race windows — ad-hoc run", () => {
+  const batchId = "adhoc_race-batch";
+
+  async function startAdhocRun(app: any) {
+    gcsStore.set(`${BUCKET}/call_list/${batchId}.txt`, "123456\n");
+    const res = await request(app).post("/bq/queue-recordings/adhoc/run").send({ batchId });
+    expect(res.status).toBe(200);
+  }
+
+  it("pause while the loader is being triggered cancels the loader and leaves the job paused", async () => {
+    const app = await freshApp();
+    const hold = holdRunTrigger("incontact-call-loader");
+
+    await startAdhocRun(app);
+    await hold.hit; // loader :run request is in flight
+
+    const pauseRes = await request(app).post("/bq/adhoc-pause").send({});
+    expect(pauseRes.status).toBe(200);
+
+    hold.release(); // trigger completes — but the token has moved on
+    await waitFor(() => wasCancelled("exec-1"));
+
+    // Background flow must bail out: no processor, no state overwrite.
+    expect(triggeredJobs).toEqual(["incontact-call-loader"]);
+    const status = await request(app).get("/bq/adhoc-download-job-status");
+    expect(status.body.status).toBe("idle");
+    expect(status.body.step).toBe("paused");
+    expect(gcsStore.has(markerKey)).toBe(true);
+  });
+
+  it("pause during the loader wait never starts the processor", async () => {
+    const app = await freshApp();
+    pollSucceeds = true;
+    const hold = holdPoll("exec-1"); // loader status poll
+
+    await startAdhocRun(app);
+    await hold.hit; // loader triggered, poll in flight
+
+    const pauseRes = await request(app).post("/bq/adhoc-pause").send({});
+    expect(pauseRes.status).toBe(200);
+
+    hold.release(); // poll reports loader success — token check must exit
+    await tick();
+    await tick();
+
+    expect(triggeredJobs).toEqual(["incontact-call-loader"]);
+    const status = await request(app).get("/bq/adhoc-download-job-status");
+    expect(status.body.status).toBe("idle");
+    expect(status.body.step).toBe("paused");
+  });
+
+  it("pause during the processor wait skips the completed/failed status update", async () => {
+    const app = await freshApp();
+    pollSucceeds = true;
+    const hold = holdPoll("exec-2"); // processor status poll
+
+    await startAdhocRun(app);
+    await hold.hit; // loader done, processor triggered, poll in flight
+
+    const pauseRes = await request(app).post("/bq/adhoc-pause").send({});
+    expect(pauseRes.status).toBe(200);
+    // Pause cancelled the live processor execution it knew about.
+    expect(wasCancelled("exec-2")).toBe(true);
+
+    hold.release(); // poll returns (cancelled/failed) — must not overwrite paused
+    await tick();
+    await tick();
+
+    const status = await request(app).get("/bq/adhoc-download-job-status");
+    expect(status.body.status).toBe("idle");
+    expect(status.body.step).toBe("paused");
+    expect(status.body.error).toBeUndefined();
+    const marker = JSON.parse(gcsStore.get(markerKey)!);
+    expect(marker.batchId).toBe(batchId);
+  });
+});
+
+describe("pause race windows — ad-hoc resume", () => {
+  const batchId = "adhoc_race-resume";
+
+  async function startResume(app: any) {
+    // Resume validation query: pending work exists.
+    bqQueryResults.push([{ pending: 2, stale_processing: 0, total: 4 }]);
+    const res = await request(app).post("/bq/adhoc-resume").send({ batchId });
+    expect(res.status).toBe(200);
+  }
+
+  it("pause while resume is triggering the processor cancels it and keeps the paused state", async () => {
+    const app = await freshApp();
+    const hold = holdRunTrigger("incontact-call-processor");
+
+    await startResume(app);
+    await hold.hit; // processor :run in flight
+
+    const pauseRes = await request(app).post("/bq/adhoc-pause").send({});
+    expect(pauseRes.status).toBe(200);
+
+    hold.release();
+    await waitFor(() => wasCancelled("exec-1"));
+
+    const status = await request(app).get("/bq/adhoc-download-job-status");
+    expect(status.body.status).toBe("idle");
+    expect(status.body.step).toBe("paused");
+    expect(gcsStore.has(markerKey)).toBe(true);
+  });
+
+  it("pause during resume's processor wait skips the completed/failed status update", async () => {
+    const app = await freshApp();
+    pollSucceeds = true;
+    const hold = holdPoll("exec-1"); // processor status poll
+
+    await startResume(app);
+    await hold.hit;
+
+    const pauseRes = await request(app).post("/bq/adhoc-pause").send({});
+    expect(pauseRes.status).toBe(200);
+
+    hold.release();
+    await tick();
+    await tick();
+
+    const status = await request(app).get("/bq/adhoc-download-job-status");
+    expect(status.body.status).toBe("idle");
+    expect(status.body.step).toBe("paused");
+    expect(status.body.error).toBeUndefined();
+  });
+});
+
+describe("pause race windows — daily pipeline (/bq/run-job)", () => {
+  async function startDailyRun(app: any) {
+    const res = await request(app).post("/bq/run-job").send({});
+    expect(res.status).toBe(200);
+  }
+
+  it("pause while the daily loader is being triggered cancels it and leaves the daily job paused", async () => {
+    const app = await freshApp();
+    const hold = holdRunTrigger("incontact-call-loader");
+
+    await startDailyRun(app);
+    await hold.hit;
+
+    const pauseRes = await request(app).post("/bq/adhoc-pause").send({});
+    expect(pauseRes.status).toBe(200);
+
+    hold.release();
+    await waitFor(() => wasCancelled("exec-1"));
+
+    expect(triggeredJobs).toEqual(["incontact-call-loader"]);
+    const status = await request(app).get("/bq/download-job-status");
+    expect(status.body.status).toBe("idle");
+    expect(status.body.step).toBe("paused");
+    expect(status.body.error).toBeUndefined();
+  });
+
+  it("pause during the daily loader wait never starts the processor", async () => {
+    const app = await freshApp();
+    pollSucceeds = true;
+    const hold = holdPoll("exec-1"); // loader status poll
+
+    await startDailyRun(app);
+    await hold.hit;
+
+    const pauseRes = await request(app).post("/bq/adhoc-pause").send({});
+    expect(pauseRes.status).toBe(200);
+
+    hold.release();
+    await tick();
+    await tick();
+
+    expect(triggeredJobs).toEqual(["incontact-call-loader"]);
+    const status = await request(app).get("/bq/download-job-status");
+    expect(status.body.status).toBe("idle");
+    expect(status.body.step).toBe("paused");
+  });
+
+  it("pause while the daily processor is being triggered cancels the fresh processor execution", async () => {
+    const app = await freshApp();
+    pollSucceeds = true; // loader completes normally
+    const hold = holdRunTrigger("incontact-call-processor");
+
+    await startDailyRun(app);
+    await hold.hit; // processor :run in flight
+
+    const pauseRes = await request(app).post("/bq/adhoc-pause").send({});
+    expect(pauseRes.status).toBe(200);
+
+    hold.release();
+    await waitFor(() => wasCancelled("exec-2"));
+
+    const status = await request(app).get("/bq/download-job-status");
+    expect(status.body.status).toBe("idle");
+    expect(status.body.step).toBe("paused");
+    expect(status.body.error).toBeUndefined();
   });
 });
