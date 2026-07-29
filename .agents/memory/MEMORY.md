@@ -3,3 +3,4 @@
 - [drizzle-kit push in CI](drizzle-push-ci.md) — `push --force` silently no-ops (exit 0) on the add-constraint "truncate?" prompt in non-TTY CI; use guarded SQL + plain push + verify.
 - [audioflow-processor](audioflow-processor.md) — external transcription job, same GCP project, not this repo; output in `incontact_transcripts`; monitor via BQ, not logs.
 - [Cloud Scheduler daily jobs](cloud-scheduler-daily-jobs.md) — API_SERVER_URL + SCHEDULER_SERVICE_ACCOUNT must travel together in cd.yml; scheduler-sa never existed.
+- [Prod dashboard stale UI](prod-dashboard-stale-ui.md) — "I don't see it" ladder: deploy → build stamp → stale localStorage; never hide panels behind silent query catches.
