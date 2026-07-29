@@ -730,7 +730,7 @@ function BatchProgressPanel({
               Reset {staleProcessing} stale
             </button>
           )}
-          {(isAdhocActive || isDailyActive) && (
+          {(isAdhocActive || isDailyActive || (!paused && !allDone)) && (
             <button
               type="button"
               onClick={onPause}
@@ -738,7 +738,7 @@ function BatchProgressPanel({
               title={
                 isDailyActive && !isAdhocActive
                   ? "Cancel the running daily download pipeline. Pending rows stay queued; use Resume to continue later."
-                  : "Cancel the running download. Pending rows stay queued; use Resume to continue later."
+                  : "Cancel any running download (even one started by the scheduler or watchdog). Pending rows stay queued; use Resume to continue later."
               }
               className="inline-flex items-center gap-1 px-2 py-1 border border-red-300 bg-red-50 text-red-700 rounded text-[11px] hover:bg-red-100 disabled:opacity-50"
             >
