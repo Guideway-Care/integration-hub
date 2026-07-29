@@ -405,6 +405,21 @@ export async function hasActiveProcessorExecution(): Promise<boolean> {
 }
 
 /** Count queue rows sitting in 'pending' for longer than the given age. */
+/**
+ * True when an operator has deliberately paused downloads (ad-hoc or daily).
+ * Checked by the self-heal watchdog so it doesn't resurrect a paused download.
+ * Considers both the in-memory job state and the durable GCS markers (which
+ * survive api-server restarts).
+ */
+export async function isDownloadPaused(): Promise<boolean> {
+  if (adhocDownloadJob.step === "paused" || downloadJob.step === "paused") return true;
+  const [adhoc, daily] = await Promise.all([
+    readPausedMarker().catch(() => null),
+    readPausedMarker(DAILY_PAUSED_MARKER).catch(() => null),
+  ]);
+  return adhoc !== null || daily !== null;
+}
+
 export async function countStalePendingRecordings(minAgeMinutes: number): Promise<number> {
   const bq = getBigQueryClient("US");
   const { staging } = getBqTables();

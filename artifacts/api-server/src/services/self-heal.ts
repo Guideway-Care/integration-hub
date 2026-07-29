@@ -64,6 +64,13 @@ export async function ensureQueueDraining(): Promise<void> {
   const bq = await import("../routes/bq");
   const stalePending = await bq.countStalePendingRecordings(PENDING_STALE_MINUTES);
   if (stalePending === 0) return;
+  if (await bq.isDownloadPaused()) {
+    logger.info(
+      { stalePending },
+      "[self-heal] downloads are paused by an operator — leaving pending queue alone",
+    );
+    return;
+  }
   if (await bq.hasActiveProcessorExecution()) return;
   logger.warn(
     { stalePending },
