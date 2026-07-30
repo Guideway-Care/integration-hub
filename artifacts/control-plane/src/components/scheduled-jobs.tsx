@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "wouter";
 import { api } from "@/lib/api";
 import {
+  ArrowRight,
   CalendarClock,
   CheckCircle2,
   XCircle,
@@ -207,6 +209,46 @@ function PipelineBlock({
           )}
         </>
       )}
+    </div>
+  );
+}
+
+/**
+ * Prominent dashboard banner shown the morning a scheduled daily download was
+ * skipped because downloads are paused. Renders only when BOTH are true:
+ *   1. the latest contacts-daily run has status "skipped", and
+ *   2. the daily paused marker still exists (download-job-status reports
+ *      idle + step "paused"), i.e. the operator hasn't resumed yet.
+ */
+export function SkippedDownloadNotice() {
+  const { data: history } = useScheduledJobsHistory(3);
+  const { data: dailyStatus } = useQuery({
+    queryKey: ["download-job-status"],
+    queryFn: () =>
+      api.get<{ status: string; step: string }>("/bq/download-job-status"),
+    retry: false,
+    refetchInterval: 60_000,
+  });
+
+  const latest = history?.jobs["contacts-daily"]?.runs?.[0];
+  const latestSkipped = latest?.status === "skipped";
+  const stillPaused = dailyStatus?.status === "idle" && dailyStatus?.step === "paused";
+
+  if (!latestSkipped || !stillPaused) return null;
+
+  return (
+    <div className="mb-6 flex flex-wrap items-center gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3">
+      <PauseCircle className="w-5 h-5 shrink-0 text-amber-600" />
+      <p className="flex-1 min-w-[16rem] text-sm text-amber-800">
+        <span className="font-semibold">Yesterday's recording download was skipped</span>{" "}
+        because downloads are paused — Resume to catch up.
+      </p>
+      <Link href="/recordings">
+        <span className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md border border-amber-400 bg-amber-100 px-3 py-1.5 text-xs font-medium text-amber-900 transition-colors hover:bg-amber-200">
+          Go to Recordings to Resume
+          <ArrowRight className="w-3.5 h-3.5" />
+        </span>
+      </Link>
     </div>
   );
 }

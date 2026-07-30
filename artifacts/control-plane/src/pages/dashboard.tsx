@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ContactCalendar, type DailyCount } from "@/components/contact-calendar";
-import { AutomatedDailyJobsCard } from "@/components/scheduled-jobs";
+import { AutomatedDailyJobsCard, SkippedDownloadNotice } from "@/components/scheduled-jobs";
 import { TranscriptionCard } from "@/components/transcription-card";
 
 interface DashboardData {
@@ -189,6 +189,8 @@ export default function DashboardPage() {
           Refresh
         </button>
       </div>
+
+      <SkippedDownloadNotice />
 
       <AutomatedDailyJobsCard />
 
