@@ -180,6 +180,15 @@ export async function syncSimpleSchedulerJob(spec: SimpleSchedulerJobSpec): Prom
         serviceAccountEmail: process.env.SCHEDULER_SERVICE_ACCOUNT || `scheduler-sa@${projectId}.iam.gserviceaccount.com`,
       },
     },
+    // Retry transient failures (e.g. a one-off 404/5xx during a cold start or
+    // brief outage) instead of losing the whole morning: without a retryConfig,
+    // Cloud Scheduler makes exactly one attempt per day.
+    retryConfig: {
+      retryCount: 5,
+      minBackoffDuration: { seconds: 60 },
+      maxBackoffDuration: { seconds: 600 },
+      maxDoublings: 3,
+    },
   };
 
   try {
